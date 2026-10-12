@@ -89,6 +89,14 @@ def test_filters():
     assert not passes_filters({"title": "x", "sizes": ["Medium-weight XL"]}, prefs, 100)
 
 
+def test_filters_use_size_groups():
+    prefs = {"sizes_tops": ["M"], "sizes_waist": ["32"], "sizes_shoes": ["10.5"]}
+    assert passes_filters({"title": "Chore coat", "sizes": ["M"]}, prefs, None)
+    assert passes_filters({"title": "501s", "sizes": ["32"]}, prefs, None)
+    assert passes_filters({"title": "Boots", "sizes": ["10.5"]}, prefs, None)
+    assert not passes_filters({"title": "Chore coat", "sizes": ["XL"]}, prefs, None)
+
+
 def test_keyword_rank():
     texts = ["Vintage Carhartt chore coat", "Levi's 501 jeans", "Canvas chore jacket"]
     assert set(keyword_rank(texts, "canvas chore coat")) == {0, 2}

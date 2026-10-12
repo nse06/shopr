@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 
 from ..config import Settings
-from .base import SearchResult, SourceError
+from .base import SearchResult, SourceError, guess_sizes
 
 API = "https://openapi.etsy.com/v3/application"
 
@@ -20,12 +20,13 @@ class EtsyClient:
         self.http = http
         self.headers = {"x-api-key": f"{settings.etsy_keystring}:{settings.etsy_shared_secret}"}
 
-    async def search(self, query: str, limit: int = 50) -> SearchResult:
-        r = await self.http.get(
-            f"{API}/listings/active",
-            headers=self.headers,
-            params={"keywords": f"{query} mens", "limit": min(limit, 100), "sort_on": "score"},
-        )
+    async def search(self, query: str, limit: int = 50, min_price: float | None = None, max_price: float | None = None) -> SearchResult:
+        params: dict = {"keywords": f"{query} mens", "limit": min(limit, 100), "sort_on": "score"}
+        if min_price is not None:
+            params["min_price"] = min_price
+        if max_price is not None:
+            params["max_price"] = max_price
+        r = await self.http.get(f"{API}/listings/active", headers=self.headers, params=params)
         if r.status_code != 200:
             raise SourceError(f"Etsy search '{query}': HTTP {r.status_code} {r.text[:200]}")
         results = r.json().get("results") or []
@@ -64,7 +65,7 @@ def parse_listings(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "url": x.get("url") or f"https://www.etsy.com/listing/{x['listing_id']}",
             "image_url": images[0].get("url_570xN"),
             "description": (x.get("description") or "")[:2000],
-            "sizes": [],
+            "sizes": guess_sizes(x.get("title") or "", x.get("tags") or []),
             "extra": {"when_made": x.get("when_made"), "tags": x.get("tags"), "materials": x.get("materials")},
         })
     return out

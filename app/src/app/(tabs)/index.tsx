@@ -1,38 +1,52 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
+import { FiltersSheet, filtersSummary, type Filters } from '../../components/FiltersSheet';
+import { ListingCard } from '../../components/ListingCard';
 import { RunBanner, useRun } from '../../components/RunBanner';
-import { Button, Chip, ErrorText, Muted } from '../../components/ui';
-import { formatPrice, type Listing } from '../../lib/api';
+import { Button, ErrorText, Muted } from '../../components/ui';
+import type { Listing, Prefs } from '../../lib/api';
 import { useApp } from '../../lib/context';
 import { openListing } from '../../lib/open';
 import { useTheme } from '../../lib/theme';
 
-const SOURCE_LABEL: Record<string, string> = { shopify: 'Shop', ebay: 'eBay', etsy: 'Etsy' };
+const PAGE = 40;
+const GAP = 12;
+const PAD = 16;
 
-export default function FeedScreen() {
+export default function ShopScreen() {
   const t = useTheme();
   const router = useRouter();
   const { width } = useWindowDimensions();
   const { api, ready, feedVersion, bumpFeed } = useApp();
   const [items, setItems] = useState<Listing[]>([]);
-  const [remaining, setRemaining] = useState(0);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [rated, setRated] = useState<number | null>(null);
-  const [history, setHistory] = useState<Listing[]>([]);
-  const busy = useRef(false);
+  const [prefs, setPrefs] = useState<Prefs | null>(null);
+  const [boardCount, setBoardCount] = useState<number | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
   const { run, track } = useRun(() => bumpFeed());
+  const running = run?.status === 'running';
+  // When filters were last saved: a slower load that started earlier must not undo them.
+  const prefsSavedAt = useRef(0);
 
+  const columns = width >= 1200 ? 5 : width >= 900 ? 4 : width >= 600 ? 3 : 2;
+  const contentWidth = Math.min(width, 1400);
+  const cardWidth = Math.floor((contentWidth - PAD * 2 - GAP * (columns - 1)) / columns);
+
+  // State is only set in promise callbacks, never synchronously (keeps effects simple).
   const load = useCallback((): Promise<void> => {
     if (!api.configured) return Promise.resolve();
-    // State is only set in the promise callbacks, never synchronously.
-    return api.feed(0, 30).then(
-      (res) => {
-        setItems(res.items);
-        setRemaining(res.remaining);
+    const started = Date.now();
+    return Promise.all([api.feed(0, PAGE), api.prefs(), api.status()]).then(
+      ([feed, p, status]) => {
+        setItems(feed.items);
+        setTotal(feed.total);
+        if (started >= prefsSavedAt.current) setPrefs(p);
+        setBoardCount(status.counts.board);
         setError(null);
         setLoading(false);
       },
@@ -47,82 +61,68 @@ export default function FeedScreen() {
     if (ready) load();
   }, [ready, load, feedVersion]);
 
-  // During a search the feed fills in batches; check again each time the search reports progress.
-  const progress = run?.status === 'running' ? (run.detail?.log?.length ?? 0) : -1;
-  useEffect(() => {
-    if (ready && progress > 0 && items.length === 0) load();
-  }, [ready, progress, items.length, load]);
-
-  // Pick up changes made on other tabs (filters, moodboard).
   useFocusEffect(
     useCallback(() => {
       if (ready) load();
     }, [ready, load]),
   );
 
-  const current = items[0];
-
-  // Warm the cache for the next few photos so swiping feels instant.
+  // During a search the grid fills in batches: refresh the first screenful as progress comes in.
+  const progress = running ? (run?.detail?.log?.length ?? 0) : -1;
   useEffect(() => {
-    const next = items.slice(1, 4).map((i) => i.image).filter(Boolean) as string[];
+    if (ready && progress > 0 && items.length < 24) load();
+  }, [ready, progress, items.length, load]);
+
+  // Warm the image cache for the first rows.
+  useEffect(() => {
+    const next = items.slice(0, 12).map((i) => i.image).filter(Boolean) as string[];
     if (next.length) Image.prefetch(next);
   }, [items]);
 
-  const rate = useCallback(
-    async (action: 'like' | 'nope') => {
-      if (!current || busy.current) return;
-      busy.current = true;
-      setItems((list) => list.slice(1));
-      setRemaining((n) => Math.max(0, n - 1));
-      setHistory((h) => [current, ...h].slice(0, 20));
-      try {
-        const res = await api.feedback(current.id, action);
-        setRated(res.rated);
-        if (res.reranked || items.length <= 5) await load();
-      } catch (e) {
-        setError((e as Error).message);
-      } finally {
-        busy.current = false;
-      }
-    },
-    [api, current, items.length, load],
-  );
+  const loadMore = () => {
+    if (items.length >= total || loading) return;
+    api.feed(items.length, PAGE).then(
+      (res) => {
+        setItems((cur) => {
+          const seen = new Set(cur.map((i) => i.id));
+          return [...cur, ...res.items.filter((i) => !seen.has(i.id))];
+        });
+        setTotal(res.total);
+      },
+      (e: Error) => setError(e.message),
+    );
+  };
 
-  const undo = useCallback(async () => {
-    const [last, ...rest] = history;
-    if (!last) return;
-    setHistory(rest);
-    setItems((list) => [last, ...list]);
-    setRemaining((n) => n + 1);
+  const startSearch = async () => {
     try {
-      await api.undoFeedback(last.id);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, [api, history]);
-
-  // Keyboard shortcuts on the web: ← pass, → like, ↵ open, ⌫ undo.
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
-      if (e.key === 'ArrowRight') rate('like');
-      else if (e.key === 'ArrowLeft') rate('nope');
-      else if (e.key === 'Enter' && current) openListing(current.url);
-      else if (e.key === 'Backspace') undo();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [rate, undo, current]);
-
-  const startRefresh = async () => {
-    try {
-      const res = await api.refresh();
-      track(res.run);
+      track((await api.refresh()).run);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
+  };
+
+  const saveFilters = async (f: Filters) => {
+    setShowFilters(false);
+    prefsSavedAt.current = Date.now();
+    try {
+      setPrefs(await api.setPrefs({ ...f, onboarded: true }));
+      if (boardCount && !running) await startSearch();
+      else load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const toggleSave = (item: Listing) => {
+    const saved = !item.saved;
+    setItems((cur) => cur.map((i) => (i.id === item.id ? { ...i, saved } : i)));
+    (saved ? api.save(item.id) : api.unsave(item.id)).catch((e: Error) => setError(e.message));
+  };
+
+  const open = (item: Listing) => {
+    api.opened(item.id).catch(() => {});
+    openListing(item.url);
   };
 
   if (ready && !api.configured) {
@@ -137,105 +137,101 @@ export default function FeedScreen() {
     );
   }
 
+  const needsFilters = prefs != null && !prefs.onboarded;
+  const header = (
+    <View style={{ gap: 10, marginBottom: 14 }}>
+      {prefs && (
+        <View style={[styles.filterBar, { borderColor: t.border, backgroundColor: t.card }]}>
+          <Text style={{ color: t.text, flex: 1 }} numberOfLines={1}>
+            {filtersSummary(prefs)}
+          </Text>
+          <Pressable onPress={() => setShowFilters(true)} accessibilityRole="button" hitSlop={8}>
+            <Text style={{ color: t.accent, fontWeight: '700' }}>Edit</Text>
+          </Pressable>
+        </View>
+      )}
+      <RunBanner run={run} />
+      <ErrorText message={error} />
+    </View>
+  );
+
+  const empty = loading ? (
+    <ActivityIndicator style={{ marginTop: 40 }} color={t.accent} />
+  ) : boardCount === 0 ? (
+    <View style={styles.empty}>
+      <Text style={[styles.h1, { color: t.text }]}>Start with your moodboard</Text>
+      <Muted style={{ textAlign: 'center', marginBottom: 16 }}>
+        Pin photos of clothes you like, then come back here to see listings that match.
+      </Muted>
+      <Button title="Go to Moodboard" onPress={() => router.navigate('/board')} />
+    </View>
+  ) : (
+    <View style={styles.empty}>
+      <Text style={[styles.h1, { color: t.text }]}>{running ? 'Searching…' : 'No listings yet'}</Text>
+      <Muted style={{ textAlign: 'center', marginBottom: 16 }}>
+        {running
+          ? 'shopr is checking listing photos against your moodboard. The first matches show up here within a minute.'
+          : 'Search the shops for listings that match your moodboard.'}
+      </Muted>
+      {!running && <Button title="Find listings" onPress={needsFilters ? () => setShowFilters(true) : startSearch} />}
+    </View>
+  );
+
   return (
-    <ScrollView style={{ backgroundColor: t.bg }} contentContainerStyle={styles.container}>
-      <View style={styles.inner}>
-        <RunBanner run={run} />
-        <ErrorText message={error} />
-        {loading && !current ? (
-          <ActivityIndicator style={{ marginTop: 40 }} color={t.accent} />
-        ) : current ? (
-          <>
-            <ListingCard listing={current} imageUrl={current.image ? api.url(current.image) : null} />
-            <View style={styles.actions}>
-              <Button title="Pass" variant="nope" onPress={() => rate('nope')} style={{ flex: 1 }} />
-              <Button title="Like" variant="like" onPress={() => rate('like')} style={{ flex: 1 }} />
-            </View>
-            <View style={styles.meta}>
-              <Muted>
-                {remaining} left{rated != null ? ` · ${rated} rated` : ''}
-              </Muted>
-              {history.length > 0 && (
-                <Pressable onPress={undo} accessibilityRole="button">
-                  <Text style={{ color: t.accent, fontWeight: '600' }}>Undo</Text>
-                </Pressable>
-              )}
-            </View>
-            {Platform.OS === 'web' && width > 700 && <Muted style={{ textAlign: 'center' }}>Keys: ← pass · → like · Enter open · Backspace undo</Muted>}
-          </>
-        ) : (
-          <View style={styles.empty}>
-            <Text style={[styles.h1, { color: t.text }]}>{run?.status === 'running' ? 'Searching…' : 'Nothing to rate yet'}</Text>
-            <Muted style={{ textAlign: 'center', marginBottom: 16 }}>
-              {run?.status === 'running'
-                ? 'shopr is looking at listing photos one by one. Your first matches show up here in a minute or two, and more keep arriving while it works.'
-                : 'Add images to your moodboard, then search the shops. The first search looks at thousands of photos and takes several minutes; later searches are much faster.'}
-            </Muted>
-            <Button title="Find listings" onPress={startRefresh} disabled={run?.status === 'running'} />
-          </View>
-        )}
-        {current && (
-          <Button
-            title={run?.status === 'running' ? 'Searching…' : 'Search again for new listings'}
-            variant="secondary"
-            onPress={startRefresh}
-            disabled={run?.status === 'running'}
-            style={{ marginTop: 24 }}
+    <View style={{ flex: 1, backgroundColor: t.bg }}>
+      <FlatList
+        key={columns}
+        data={items}
+        numColumns={columns}
+        keyExtractor={(i) => i.id}
+        renderItem={({ item }) => (
+          <ListingCard
+            listing={item}
+            imageUrl={item.image ? api.url(item.image) : null}
+            width={cardWidth}
+            onOpen={() => open(item)}
+            onToggleSave={() => toggleSave(item)}
           />
         )}
-      </View>
-    </ScrollView>
-  );
-}
-
-function ListingCard({ listing, imageUrl }: { listing: Listing; imageUrl: string | null }) {
-  const t = useTheme();
-  const details = [listing.brand, listing.condition, listing.era].filter((d) => d && d.toLowerCase() !== 'vintage');
-  return (
-    <View style={[styles.card, { backgroundColor: t.card, borderColor: t.border }]}>
-      <Pressable onPress={() => openListing(listing.url)} accessibilityRole="link" accessibilityLabel={`Open ${listing.title}`}>
-        <Image source={imageUrl ?? undefined} style={styles.image} contentFit="contain" transition={120} />
-      </Pressable>
-      <View style={styles.cardBody}>
-        <View style={styles.row}>
-          <Text style={[styles.price, { color: t.text }]}>{formatPrice(listing.price, listing.currency)}</Text>
-          <Muted>
-            {SOURCE_LABEL[listing.source] ?? listing.source}
-            {listing.source === 'shopify' ? ` · ${listing.store}` : ''}
-          </Muted>
-        </View>
-        <Text style={[styles.title, { color: t.text }]} numberOfLines={3}>
-          {listing.title}
-        </Text>
-        <View style={styles.chips}>
-          {listing.sizes.slice(0, 6).map((s) => (
-            <Chip key={s} label={s} />
-          ))}
-          {details.map((d) => (
-            <Chip key={d!} label={d!} />
-          ))}
-        </View>
-        <Pressable onPress={() => openListing(listing.url)} accessibilityRole="link">
-          <Text style={{ color: t.accent, fontWeight: '600', marginTop: 4 }}>Open listing ↗</Text>
-        </Pressable>
-      </View>
+        columnWrapperStyle={columns > 1 ? { gap: GAP } : undefined}
+        contentContainerStyle={[styles.list, { width: contentWidth }]}
+        style={{ alignSelf: 'center', width: '100%' }}
+        ItemSeparatorComponent={() => <View style={{ height: 18 }} />}
+        ListHeaderComponent={header}
+        ListEmptyComponent={empty}
+        ListFooterComponent={
+          items.length > 0 ? (
+            <View style={{ marginTop: 24, gap: 8 }}>
+              {items.length < total && <Muted style={{ textAlign: 'center' }}>Loading more…</Muted>}
+              <Button
+                title={running ? 'Searching…' : 'Search again for new listings'}
+                variant="secondary"
+                onPress={startSearch}
+                disabled={running}
+              />
+            </View>
+          ) : null
+        }
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.6}
+      />
+      {(showFilters || (needsFilters && boardCount !== 0)) && prefs && (
+        <FiltersSheet
+          visible
+          initial={prefs}
+          firstTime={needsFilters}
+          onSave={saveFilters}
+          onClose={() => setShowFilters(false)}
+        />
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 16, paddingBottom: 40, alignItems: 'center' },
-  inner: { width: '100%', maxWidth: 520 },
+  list: { padding: PAD, paddingBottom: 40, alignSelf: 'center' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   h1: { fontSize: 22, fontWeight: '700', marginBottom: 8, textAlign: 'center' },
-  card: { borderWidth: 1, borderRadius: 16, overflow: 'hidden' },
-  image: { width: '100%', aspectRatio: 4 / 5, backgroundColor: '#e9e5de' },
-  cardBody: { padding: 14, gap: 8 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
-  price: { fontSize: 20, fontWeight: '700' },
-  title: { fontSize: 16, lineHeight: 22 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  actions: { flexDirection: 'row', gap: 12, marginTop: 14 },
-  meta: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, marginBottom: 6 },
-  empty: { alignItems: 'center', paddingVertical: 48 },
+  empty: { alignItems: 'center', paddingVertical: 48, paddingHorizontal: 12 },
+  filterBar: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderRadius: 12, padding: 12 },
 });

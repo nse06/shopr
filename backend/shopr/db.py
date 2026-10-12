@@ -20,14 +20,19 @@ CREATE TABLE IF NOT EXISTS board_items (
     origin TEXT,                     -- original file name or URL
     group_key TEXT,                  -- frames from one video share a key
     created_at REAL NOT NULL,
-    embedding BLOB
+    embedding BLOB,
+    aspect REAL,                     -- photo height / width
+    x REAL, y REAL, w REAL,          -- pinboard position and width (board units)
+    rot REAL,                        -- tilt in degrees
+    z INTEGER                        -- stacking order
 );
 
 CREATE TABLE IF NOT EXISTS shopify_stores (
     domain TEXT PRIMARY KEY,
     name TEXT,
     enabled INTEGER NOT NULL DEFAULT 1,
-    last_fetched REAL
+    last_fetched REAL,
+    currency TEXT
 );
 
 CREATE TABLE IF NOT EXISTS listings (
@@ -59,8 +64,16 @@ CREATE TABLE IF NOT EXISTS feed (
 
 CREATE TABLE IF NOT EXISTS feedback (
     listing_id TEXT PRIMARY KEY,
-    action TEXT NOT NULL,            -- like | nope
+    action TEXT NOT NULL,            -- like (saved) | nope (hidden)
     arm TEXT,
+    created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id TEXT NOT NULL,
+    kind TEXT NOT NULL,              -- open | save | unsave
+    arm TEXT,                        -- which ranking showed it (blind test credit)
     created_at REAL NOT NULL
 );
 
@@ -81,10 +94,20 @@ CREATE TABLE IF NOT EXISTS kv (
 DEFAULT_PREFS: dict[str, Any] = {
     "min_price": None,
     "max_price": None,
-    "size_terms": [],          # e.g. ["M", "38", "32"]; empty = no size filter
+    "sizes_tops": [],          # e.g. ["M", "L"]
+    "sizes_waist": [],         # e.g. ["32"]
+    "sizes_shoes": [],         # US sizes, e.g. ["10", "10.5"]
+    "size_terms": [],          # any other size words to match
+    "onboarded": False,        # sizes and price range have been asked
     "exclude_terms": ["replica", "lot of", "bundle", "costume", "women's", "womens"],
     "blind_test": True,        # interleave a keyword-search baseline to measure the ranking
-    "max_age_days": 3,         # only rank listings seen in the last N days
+    "deep_scan": False,        # also pull whole Shopify catalogs (slow; finds what search misses)
+}
+
+# Columns added after the first release; created on startup if missing.
+MIGRATIONS = {
+    "shopify_stores": {"currency": "TEXT"},
+    "board_items": {"aspect": "REAL", "x": "REAL", "y": "REAL", "w": "REAL", "rot": "REAL", "z": "INTEGER"},
 }
 
 
@@ -106,6 +129,11 @@ class DB:
         self._lock = threading.RLock()
         with self._lock:
             self._conn.executescript(SCHEMA)
+            for table, columns in MIGRATIONS.items():
+                existing = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+                for name, decl in columns.items():
+                    if name not in existing:
+                        self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
             self._conn.commit()
 
     # -- low level -----------------------------------------------------------
@@ -136,20 +164,35 @@ class DB:
         )
 
     def prefs(self) -> dict[str, Any]:
-        return {**DEFAULT_PREFS, **(self.get_kv("prefs", {}) or {})}
+        stored = self.get_kv("prefs", {}) or {}
+        return {**DEFAULT_PREFS, **{k: v for k, v in stored.items() if k in DEFAULT_PREFS}}
 
     def set_prefs(self, updates: dict[str, Any]) -> dict[str, Any]:
-        merged = {**self.prefs(), **{k: v for k, v in updates.items() if k in DEFAULT_PREFS}}
-        self.set_kv("prefs", merged)
-        return merged
+        # Store only what the user set, so later default changes still reach them.
+        stored = {k: v for k, v in (self.get_kv("prefs", {}) or {}).items() if k in DEFAULT_PREFS}
+        stored.update({k: v for k, v in updates.items() if k in DEFAULT_PREFS})
+        self.set_kv("prefs", stored)
+        return self.prefs()
 
     # -- board -----------------------------------------------------------------
-    def add_board_item(self, kind: str, path: str, origin: str | None, embedding: np.ndarray, group_key: str | None = None) -> int:
+    def add_board_item(
+        self, kind: str, path: str, origin: str | None, embedding: np.ndarray,
+        group_key: str | None = None, aspect: float | None = None, spot: dict[str, float] | None = None,
+    ) -> int:
+        spot = spot or {}
+        z = self.query("SELECT COALESCE(MAX(z), 0) + 1 AS z FROM board_items")[0]["z"]
         cur = self.execute(
-            "INSERT INTO board_items(kind, path, origin, group_key, created_at, embedding) VALUES(?,?,?,?,?,?)",
-            (kind, path, origin, group_key, time.time(), to_blob(embedding)),
+            "INSERT INTO board_items(kind, path, origin, group_key, created_at, embedding, aspect, x, y, w, rot, z) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (kind, path, origin, group_key, time.time(), to_blob(embedding), aspect,
+             spot.get("x"), spot.get("y"), spot.get("w"), spot.get("rot"), z),
         )
         return int(cur.lastrowid)
+
+    def update_board_item(self, item_id: int, fields: dict[str, float]) -> None:
+        if fields:
+            cols = ", ".join(f"{k} = ?" for k in fields)
+            self.execute(f"UPDATE board_items SET {cols} WHERE id = ?", (*fields.values(), item_id))
 
     def board_items(self) -> list[sqlite3.Row]:
         return self.query("SELECT * FROM board_items ORDER BY id")

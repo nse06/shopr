@@ -37,14 +37,23 @@ from .taste import (
 
 log = logging.getLogger(__name__)
 
-STORE_TTL = 6 * 3600          # re-pull a Shopify catalog at most every 6 hours
+STORE_TTL = 6 * 3600          # deep scan: re-pull a Shopify catalog at most every 6 hours
+FRESH_DAYS = 1                # only rank listings seen in the last day (older ones may have sold)
 FEED_SIZE = 150
 MAX_QUERIES = 12              # marketplace queries per refresh, across clusters
+SHOP_QUERIES = 6              # searches run in each Shopify shop per refresh
 MAX_IMAGE_SEARCHES = 8        # eBay image searches per refresh
-# Photos analyzed per refresh. On a laptop CPU the model does roughly 10-30 photos/s
-# (much faster on Apple Silicon/GPU); the rest are picked up on later refreshes.
-EMBED_BUDGET = int(os.environ.get("SHOPR_EMBED_BUDGET", "2500"))
+# Photos analyzed per refresh. A laptop CPU does very roughly 3-15 photos/s (faster on
+# Apple Silicon); the rest are picked up on later refreshes.
+EMBED_BUDGET = int(os.environ.get("SHOPR_EMBED_BUDGET", "600"))
+# Re-rank after these many photos (and every 256 after), so the feed fills in early.
+EARLY_RANKS = {64, 192}
 DEFAULT_STORES = Path(__file__).with_name("stores.json")
+
+
+def _price_range(prefs: dict) -> tuple[float | None, float | None]:
+    lo, hi = prefs.get("min_price"), prefs.get("max_price")
+    return (float(lo) if lo not in (None, "") else None, float(hi) if hi not in (None, "") else None)
 
 
 class Engine:
@@ -119,6 +128,11 @@ class Engine:
             self._profile_cache = (key, prof)
         prof.liked = self._feedback_vectors("like")
         prof.noped = self._feedback_vectors("nope")
+        rows = self.db.query(
+            "SELECT DISTINCT l.embedding FROM events e JOIN listings l ON l.id = e.listing_id "
+            "WHERE e.kind = 'open' AND l.embedding IS NOT NULL"
+        )
+        prof.opened = np.array([from_blob(r["embedding"]) for r in rows]) if rows else None
         return prof
 
     def _apply_cached_claude(self, key: str, prof: TasteProfile) -> None:
@@ -196,13 +210,18 @@ class Engine:
         detail["queries"] = [q for _, q in queries]
 
         baseline_lists: list[list[str]] = []
+        deep_scan = bool(self.db.prefs().get("deep_scan"))
         async with httpx.AsyncClient(timeout=30, headers={"User-Agent": USER_AGENT}, follow_redirects=True) as http:
-            await self._fetch_shopify(http, logline, detail, force_stores)
+            # Marketplaces first: they're the main sources when connected.
             if self.s.ebay_enabled:
                 baseline_lists += await self._fetch_ebay(http, prof, queries, logline, detail)
             if self.s.etsy_enabled:
                 baseline_lists += await self._fetch_etsy(http, queries, logline, detail)
-            baseline_lists += self._shopify_baseline([q for _, q in queries])
+            if deep_scan:
+                await self._fetch_shopify(http, logline, detail, force_stores)
+                baseline_lists += self._shopify_baseline([q for _, q in queries])
+            else:
+                baseline_lists += await self._search_shopify(http, [q for _, q in queries][:SHOP_QUERIES], logline, detail)
             self.db.set_kv("baseline_lists", baseline_lists)
             # Baseline items get analyzed first too, so likes on them also teach the ranking.
             priority = {i for lst in baseline_lists for i in lst}
@@ -211,10 +230,49 @@ class Engine:
         n = await self.rank(prof)
         logline(f"Feed ready: {n} listings")
 
+    async def _search_shopify(self, http: httpx.AsyncClient, queries: list[str], logline, detail) -> list[list[str]]:
+        """Run each search in every enabled shop's own search box. Returns, per query,
+        the shops' results in their own order, alternating between shops: that is the
+        keyword-search baseline for the blind test."""
+        stores = self.db.query("SELECT * FROM shopify_stores WHERE enabled = 1")
+        if not stores or not queries:
+            return []
+        logline(f"Searching {len(stores)} shops")
+        sem = asyncio.Semaphore(8)
+        per_store: dict[str, list[list[str]]] = {}
+
+        async def one(store) -> None:
+            domain = store["domain"]
+            async with sem:
+                currency = store["currency"]
+                if not currency:
+                    currency = await shopify.fetch_currency(http, domain)
+                    if currency:
+                        self.db.execute("UPDATE shopify_stores SET currency = ? WHERE domain = ?", (currency, domain))
+                lists: list[list[str]] = []
+                for q in queries:
+                    try:
+                        items = await shopify.search_store(http, domain, q, currency)
+                    except SourceError as e:
+                        detail["errors"].append(str(e))
+                        break  # one failure usually means the shop blocks search; skip the rest
+                    self.db.upsert_listings(items)
+                    lists.append([x["id"] for x in items])
+                per_store[domain] = lists
+                self.db.execute("UPDATE shopify_stores SET last_fetched = ? WHERE domain = ?", (time.time(), domain))
+
+        await asyncio.gather(*(one(s) for s in stores))
+        found = {i for lists in per_store.values() for ids in lists for i in ids}
+        logline(f"Shops: {len(found)} matching listings")
+        return [
+            round_robin([lists[qi] for lists in per_store.values() if qi < len(lists)])[:60]
+            for qi in range(len(queries))
+        ]
+
     def _shopify_baseline(self, queries: list[str]) -> list[list[str]]:
-        """Shopify has no search API, so the baseline is keyword matching that mimics
-        each shop's search box (newest first among equal matches), then alternates
-        between shops the way you would if you searched each one in turn."""
+        """Deep scan: the catalogs came in without searching, so the baseline is keyword
+        matching that mimics each shop's search box (newest first among equal matches),
+        alternating between shops the way you would if you searched each one in turn."""
         by_store: dict[str, list] = {}
         for r in sorted(self._fresh_listings(), key=lambda r: -r["first_seen"]):
             if r["source"].startswith("shopify:"):
@@ -229,8 +287,7 @@ class Engine:
         return lists
 
     def _fresh_listings(self) -> list:
-        max_age = float(self.db.prefs().get("max_age_days") or 3) * 86400
-        return self.db.query("SELECT * FROM listings WHERE last_seen >= ?", (time.time() - max_age,))
+        return self.db.query("SELECT * FROM listings WHERE last_seen >= ?", (time.time() - FRESH_DAYS * 86400,))
 
     async def _fetch_shopify(self, http: httpx.AsyncClient, logline, detail, force: bool) -> None:
         stores = self.db.query("SELECT * FROM shopify_stores WHERE enabled = 1")
@@ -264,9 +321,10 @@ class Engine:
         client = EbayClient(self.s, http)
         baseline: list[list[str]] = []
         results: list[SearchResult] = []
+        lo, hi = _price_range(self.db.prefs())
         for _, q in queries:
             try:
-                results.append(await client.search(q))
+                results.append(await client.search(q, min_price=lo, max_price=hi))
             except SourceError as e:
                 detail["errors"].append(str(e))
         for res in results:
@@ -284,7 +342,7 @@ class Engine:
         for pid in picks:
             path = self.s.media_dir / rows[int(pid)]["path"]
             try:
-                res = await client.search_by_image(path.read_bytes(), label=f"board image {pid}")
+                res = await client.search_by_image(path.read_bytes(), label=f"board image {pid}", min_price=lo, max_price=hi)
             except SourceError as e:
                 detail["errors"].append(str(e))
                 continue
@@ -298,9 +356,10 @@ class Engine:
         client = EtsyClient(self.s, http)
         baseline: list[list[str]] = []
         total = 0
+        lo, hi = _price_range(self.db.prefs())
         for _, q in queries:
             try:
-                res = await client.search(q)
+                res = await client.search(q, min_price=lo, max_price=hi)
             except SourceError as e:
                 detail["errors"].append(str(e))
                 continue
@@ -360,9 +419,9 @@ class Engine:
                 for (lid, _), v in zip(ok, vecs):
                     self.db.set_listing_embedding(lid, v)
             done += len(batch)
-            if done % 256 == 0 or done == len(pending):
-                # Refresh the feed as photos come in, so matches show up within a minute
-                # or two instead of after the whole batch.
+            if done in EARLY_RANKS or done % 256 == 0 or done == len(pending):
+                # Refresh the feed as photos come in, so the first matches show up
+                # within seconds instead of after the whole batch.
                 if done < len(pending):
                     await self.rank(prof)
                 logline(f"Analyzed {done}/{len(pending)} photos")
@@ -376,8 +435,8 @@ class Engine:
         if prof is None:
             return 0
         prefs = self.db.prefs()
-        rated = {r["listing_id"] for r in self.db.query("SELECT listing_id FROM feedback")}
-        rows = [r for r in self._fresh_listings() if r["id"] not in rated]
+        hidden = {r["listing_id"] for r in self.db.query("SELECT listing_id FROM feedback WHERE action = 'nope'")}
+        rows = [r for r in self._fresh_listings() if r["id"] not in hidden]
 
         def keep(r, cluster: int | None = None) -> bool:
             listing = {"title": r["title"], "sizes": json.loads(r["sizes"] or "[]")}

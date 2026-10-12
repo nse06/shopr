@@ -1,6 +1,10 @@
-"""Independent shops on Shopify expose their catalog at /products.json.
-Small vintage shops have hundreds to a few thousand products, so we pull the
-whole catalog (capped) and let the taste model do the searching."""
+"""Independent shops on Shopify.
+
+Two ways in, both public parts of every Shopify storefront:
+- search_store: the shop's own search box (/search/suggest.json). Fast and the
+  default: a handful of requests per shop, only matching, in-stock items.
+- fetch_store: the whole catalog (/products.json), for the optional deep scan
+  that lets the taste model find things keyword search would miss."""
 
 from __future__ import annotations
 
@@ -10,7 +14,7 @@ from typing import Any
 
 import httpx
 
-from .base import USER_AGENT, SourceError
+from .base import USER_AGENT, SourceError, guess_sizes
 
 MAX_PAGES = 4  # 250 products per page, newest first
 _TAGS = re.compile(r"<[^>]+>")
@@ -38,16 +42,21 @@ def _size_values(product: dict[str, Any]) -> list[str]:
     return sizes
 
 
+def _absolute(url: str) -> str:
+    return f"https:{url}" if url.startswith("//") else url
+
+
+def _small(url: str) -> str:
+    # Ask Shopify's CDN for a small rendition; plenty for matching and the feed.
+    return f"{url}{'&' if '?' in url else '?'}width=480"
+
+
 def _image_url(product: dict[str, Any]) -> str | None:
     images = product.get("images") or []
     if not images:
         return None
     src = images[0].get("src")
-    if not src:
-        return None
-    # Ask Shopify's CDN for a small rendition; plenty for embedding and the feed.
-    sep = "&" if "?" in src else "?"
-    return f"{src}{sep}width=480"
+    return _small(_absolute(src)) if src else None
 
 
 def parse_products(domain: str, products: list[dict[str, Any]], currency: str | None) -> list[dict[str, Any]]:
@@ -79,6 +88,58 @@ def parse_products(domain: str, products: list[dict[str, Any]], currency: str | 
             },
         })
     return out
+
+
+def parse_suggest(domain: str, products: list[dict[str, Any]], currency: str | None) -> list[dict[str, Any]]:
+    """Parse results from a shop's search box (Shopify's predictive search API)."""
+    out = []
+    for p in products:
+        if p.get("available") is False or p.get("id") is None:
+            continue
+        image = p.get("image") or (p.get("featured_image") or {}).get("url")
+        if not image:
+            continue
+        try:
+            price = float(p["price"]) if p.get("price") not in (None, "") else None
+        except (TypeError, ValueError):
+            price = None
+        tags = p.get("tags") if isinstance(p.get("tags"), list) else []
+        description = html.unescape(_TAGS.sub(" ", p.get("body") or ""))
+        out.append({
+            # Same id as the catalog scan, so both ways in share one record.
+            "id": f"shopify:{domain}:{p['id']}",
+            "source": f"shopify:{domain}",
+            "title": p.get("title") or "",
+            "price": price,
+            "currency": currency,
+            "url": f"https://{domain}/products/{p.get('handle')}",
+            "image_url": _small(_absolute(image)),
+            "description": " ".join(description.split())[:2000],
+            "sizes": guess_sizes(p.get("title") or "", tags),
+            "extra": {"vendor": p.get("vendor"), "product_type": p.get("type"), "tags": tags},
+        })
+    return out
+
+
+async def search_store(client: httpx.AsyncClient, domain: str, query: str, currency: str | None) -> list[dict[str, Any]]:
+    """Up to 10 in-stock products from the shop's own search, in the shop's order."""
+    params = {
+        "q": query,
+        "resources[type]": "product",
+        "resources[limit]": 10,
+        "resources[options][unavailable_products]": "hide",
+    }
+    try:
+        r = await client.get(f"https://{domain}/search/suggest.json", params=params)
+    except httpx.HTTPError as e:
+        raise SourceError(f"{domain}: {e}") from e
+    if r.status_code != 200:
+        raise SourceError(f"{domain}: search returned HTTP {r.status_code}")
+    try:
+        products = r.json()["resources"]["results"]["products"]
+    except (ValueError, KeyError, TypeError) as e:
+        raise SourceError(f"{domain}: unexpected search response") from e
+    return parse_suggest(domain, products, currency)
 
 
 async def fetch_currency(client: httpx.AsyncClient, domain: str) -> str | None:

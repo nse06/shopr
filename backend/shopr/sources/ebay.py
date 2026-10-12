@@ -17,7 +17,7 @@ from typing import Any
 import httpx
 
 from ..config import Settings
-from .base import SearchResult, SourceError
+from .base import SearchResult, SourceError, guess_sizes
 
 API = "https://api.ebay.com"
 SCOPE = "https://api.ebay.com/oauth/api_scope"
@@ -30,7 +30,7 @@ class EbayClient:
         self._token: str | None = None
         self._token_expiry = 0.0
 
-    async def _auth(self) -> str:
+    async def token(self) -> str:
         if self._token and time.time() < self._token_expiry - 60:
             return self._token
         basic = base64.b64encode(f"{self.s.ebay_client_id}:{self.s.ebay_client_secret}".encode()).decode()
@@ -47,31 +47,46 @@ class EbayClient:
         return self._token
 
     async def _headers(self) -> dict[str, str]:
-        h = {"Authorization": f"Bearer {await self._auth()}", "X-EBAY-C-MARKETPLACE-ID": self.s.ebay_marketplace}
+        h = {"Authorization": f"Bearer {await self.token()}", "X-EBAY-C-MARKETPLACE-ID": self.s.ebay_marketplace}
         if self.s.ebay_campaign_id:
             h["X-EBAY-C-ENDUSERCTX"] = f"affiliateCampaignId={self.s.ebay_campaign_id}"
         return h
 
-    async def search(self, query: str, limit: int = 50) -> SearchResult:
-        r = await self.http.get(
-            f"{API}/buy/browse/v1/item_summary/search",
-            headers=await self._headers(),
-            params={"q": query, "category_ids": self.s.ebay_category_ids, "limit": limit},
-        )
+    async def search(self, query: str, limit: int = 50, min_price: float | None = None, max_price: float | None = None) -> SearchResult:
+        params = {"q": query, "category_ids": self.s.ebay_category_ids, "limit": limit}
+        if f := price_filter(min_price, max_price):
+            params["filter"] = f
+        r = await self.http.get(f"{API}/buy/browse/v1/item_summary/search", headers=await self._headers(), params=params)
         if r.status_code != 200:
             raise SourceError(f"eBay search '{query}': HTTP {r.status_code} {r.text[:200]}")
         return SearchResult(query, parse_items(r.json()))
 
-    async def search_by_image(self, image_bytes: bytes, label: str, limit: int = 50) -> SearchResult:
+    async def search_by_image(
+        self, image_bytes: bytes, label: str, limit: int = 50, min_price: float | None = None, max_price: float | None = None
+    ) -> SearchResult:
+        params = {"category_ids": self.s.ebay_category_ids, "limit": limit}
+        if f := price_filter(min_price, max_price):
+            params["filter"] = f
         r = await self.http.post(
             f"{API}/buy/browse/v1/item_summary/search_by_image",
             headers={**await self._headers(), "Content-Type": "application/json"},
-            params={"category_ids": self.s.ebay_category_ids, "limit": limit},
+            params=params,
             json={"image": base64.b64encode(image_bytes).decode()},
         )
         if r.status_code != 200:
             raise SourceError(f"eBay image search ({label}): HTTP {r.status_code} {r.text[:200]}")
         return SearchResult(f"[image] {label}", parse_items(r.json()))
+
+
+def price_filter(min_price: float | None, max_price: float | None) -> str | None:
+    """eBay's filter syntax: price:[10..50], price:[10] (10 and up) or price:[..50]."""
+    if min_price is None and max_price is None:
+        return None
+    if max_price is None:
+        rng = f"{min_price:g}"
+    else:
+        rng = f"{'' if min_price is None else f'{min_price:g}'}..{max_price:g}"
+    return f"price:[{rng}],priceCurrency:USD"
 
 
 def _bigger_image(url: str | None) -> str | None:
@@ -99,7 +114,7 @@ def parse_items(body: dict[str, Any]) -> list[dict[str, Any]]:
             "url": item.get("itemAffiliateWebUrl") or item.get("itemWebUrl") or "",
             "image_url": _bigger_image(image),
             "description": item.get("shortDescription") or "",
-            "sizes": [],
+            "sizes": guess_sizes(item.get("title") or "", []),
             "extra": {
                 "condition": item.get("condition"),
                 "buying_options": item.get("buyingOptions"),

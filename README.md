@@ -11,14 +11,15 @@ app/       Expo app: one codebase for the iPhone app and the website
 
 ## How it works
 
-1. **Moodboard in.** Add photos, screenshots, short videos (shopr keeps distinct frames) or links (Pinterest pins and product pages, via the page's preview image).
-2. **Taste profile.** Each image goes through [Marqo-FashionSigLIP](https://huggingface.co/Marqo/marqo-fashionSigLIP), an image model fine-tuned on fashion. That captures cut, fabric, fade and era in a way keywords can't. The board is clustered into a few *directions* (say, Americana workwear plus 90s NFL sweatshirts) so they don't average into mush.
-3. **Search queries.** Each direction gets tags (garment, material, style, colour) by comparing it to text in the same model, which turns them into marketplace searches. With an Anthropic API key, Claude looks at each direction's images and writes the queries instead.
-4. **Listings.** Pulled from:
-   - **Independent Shopify vintage and archive shops** (36 verified to work, 20 on by default, add your own in Setup). shopr pulls their whole in-stock catalog, so no keyword is involved.
-   - **eBay** (keyword search plus image search with your board photos) and **Etsy**, if you add API keys.
-5. **Ranking.** Each listing photo is scored by similarity to your board images and directions. Every 10 ratings it re-ranks to pull towards what you liked and away from what you passed. Each direction gets feed slots in proportion to its share of the board, and near-duplicate photos are dropped.
-6. **Blind test.** Team-draft interleaving mixes shopr's ranking with keyword-search results (the shops' own search order, or keyword matching for Shopify) without telling you which is which. **Setup → Is it working?** shows the like rate for each.
+1. **Moodboard in.** Pin photos, screenshots, short videos (shopr keeps distinct frames) or links (Pinterest pins and product pages, via the page's preview image) to a corkboard, and arrange them however you like.
+2. **Taste profile.** Each image goes through [Marqo-FashionSigLIP](https://huggingface.co/Marqo/marqo-fashionSigLIP), an image model fine-tuned on fashion. That captures cut, fabric, fade and era in a way keywords can't. The board is clustered into a few *styles* (say, Americana workwear plus 90s NFL sweatshirts) so they don't average into mush.
+3. **Search queries.** Each style gets tags (garment, material, style, colour) by comparing it to text in the same model, which turns them into marketplace searches. With an Anthropic API key, Claude looks at each style's images and writes the queries instead.
+4. **Listings,** limited to your sizes and price range (asked before the first search), from:
+   - **eBay** (keyword search plus image search with your board photos) and **Etsy**, once connected in **Setup**.
+   - **Independent Shopify vintage and archive shops** (36 verified, 20 on by default, add your own in Setup), through each shop's own search box. An optional deep scan pulls whole catalogs instead: slower, but it finds what keyword search misses.
+   - Depop, Grailed, Poshmark and Vinted don't let apps search them, so **Moodboard → Styles** has one-tap links that open your searches there.
+5. **Ranking.** Each listing photo is scored by similarity to your board images and styles, pulled towards listings like the ones you save and open. Each style gets grid slots in proportion to its share of the board, and near-duplicate photos are dropped. Matches start appearing within seconds and fill in while the search runs.
+6. **Blind test.** Team-draft interleaving mixes shopr's ranking with plain keyword-search results (the shops' own search order) without telling you which is which. **Setup → Is it working?** counts opens and saves for each.
 
 ## Run it
 
@@ -50,18 +51,19 @@ make server    # start the server on port 8000
 
 Open http://localhost:8000. The first start downloads the image model (about 800 MB, cached after that), so the moodboard accepts images about a minute after the server starts.
 
-**First search:** pulling 20 shop catalogs takes about 20 seconds. Analyzing photos is the slow part: about 6 photos/s on a 4-core CPU, faster on newer laptops and Apple Silicon. Each search analyzes up to 2,500 new photos (`SHOPR_EMBED_BUDGET`), most relevant first, and later searches pick up the rest.
+**Searches** take about two minutes the first time: searching 20 shops takes seconds, and checking listing photos against your board is the slow part (about 6 photos/s on a 4-core CPU, faster on newer laptops). The first matches show up within about 30 seconds. Each search checks up to 600 new photos (`SHOPR_EMBED_BUDGET`); photos it has already checked are remembered, so later searches are quicker.
 
-### API keys (optional)
+### Connecting eBay, Etsy and Claude (optional)
 
-Copy `backend/.env.example` to `backend/.env`:
+In the app, go to **Setup → Where shopr searches** and follow the steps. shopr checks each key with the service before saving it. The keys stay in the database on your computer.
 
-| Key | What it adds | Where to get it |
+| Source | What it adds | Where to get a key |
 |---|---|---|
-| `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET` | eBay keyword and image search | [eBay developer keys](https://developer.ebay.com/my/keys), production keyset |
-| `ETSY_KEYSTRING`, `ETSY_SHARED_SECRET` | Etsy search (lots of real vintage) | [Etsy apps](https://www.etsy.com/developers/your-apps) |
-| `ANTHROPIC_API_KEY` | Claude writes the search queries from your board | [Anthropic console](https://console.anthropic.com) |
-| `EBAY_CAMPAIGN_ID` | eBay Partner Network affiliate links | [EPN](https://partnernetwork.ebay.com) |
+| eBay | Keyword and image search on the biggest secondhand marketplace | [eBay developer keys](https://developer.ebay.com/my/keys), Production keyset |
+| Etsy | Search across lots of real vintage | [Etsy apps](https://www.etsy.com/developers/your-apps) |
+| Claude | Better search terms written from your board | [Anthropic console](https://console.anthropic.com/settings/keys) |
+
+You can also put keys in `backend/.env` (see `.env.example`), along with `EBAY_CAMPAIGN_ID` for eBay Partner Network affiliate links.
 
 ### On your iPhone
 
@@ -76,15 +78,16 @@ Copy `backend/.env.example` to `backend/.env`:
 
 ## Using it
 
-1. **Moodboard tab:** add 20–30 images, with variety. "What shopr sees" shows the directions it found and the searches it will run.
-2. **Feed tab:** tap **Find listings**, then rate items with Like / Pass. Tap the photo to open the listing. On the web, use ← / → / Enter / Backspace.
-3. **Setup tab:** set price and size filters, turn shops on or off, and check **Is it working?** Rate at least 50 from each side before trusting the numbers.
+1. **Moodboard:** pin 20–30 photos with variety. Drag to arrange, tap a photo to resize or remove it, and drag the empty board to scroll. **Styles** shows what shopr sees, plus links to search Depop, Grailed, Poshmark and Vinted.
+2. **Shop:** pick your sizes and price range, and listings fill in as shopr finds them. Tap a listing to open it, tap ♡ to save it. **Edit** changes sizes and price.
+3. **Saved:** everything you've hearted.
+4. **Setup:** connect eBay/Etsy/Claude, turn shops on or off, and check **Is it working?**
 
 ## Limits of this prototype
 
-- **Depop, Grailed, Vinted and Poshmark aren't included.** They have no public API, and scraping breaks their terms.
+- **Depop, Grailed, Vinted and Poshmark can't be searched by shopr.** They have no public API, Depop has shut the unofficial one, and Grailed blocks automated access. shopr links to your searches on them instead.
 - **Instagram and TikTok links usually fail,** because those sites hide previews from apps. Screenshots work.
-- **Size filtering** only works where a shop lists sizes (Shopify variants). Listings with no size info are kept.
+- **Size filtering** reads sizes from shop data, tags and titles ("Chore Coat - L", "SZ M", "W32"). Listings that don't say their size are kept.
 - **The eBay and Etsy connectors** follow the official API docs and are covered by mocked tests, but haven't been run against live keys yet. Likewise the Claude query step.
 - **Single user, local data:** everything lives in `backend/data/` (SQLite plus images) and is gitignored.
 

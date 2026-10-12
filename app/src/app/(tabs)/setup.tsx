@@ -4,13 +4,12 @@ import { Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 
 
 import { useRun } from '../../components/RunBanner';
 import { Button, ErrorText, Field, Muted, Section } from '../../components/ui';
-import { normalizeServer, type Connection, type Prefs, type Stats, type Status, type Store } from '../../lib/api';
+import { normalizeServer, type Connection, type KeysIn, type Prefs, type Stats, type Status, type Store } from '../../lib/api';
 import { useApp } from '../../lib/context';
+import { openListing } from '../../lib/open';
 import { useTheme } from '../../lib/theme';
 
-function pct(n: number | null | undefined): string {
-  return n == null ? '–' : `${Math.round(n * 100)}%`;
-}
+type SourceName = 'ebay' | 'etsy' | 'claude';
 
 export default function SetupScreen() {
   const t = useTheme();
@@ -18,11 +17,10 @@ export default function SetupScreen() {
   const [status, setStatus] = useState<Status | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [prefs, setPrefs] = useState<Prefs | null>(null);
-  const [draft, setDraft] = useState({ min: '', max: '', sizes: '', exclude: '' });
   const [stores, setStores] = useState<Store[]>([]);
   const [newStore, setNewStore] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+
   const load = useCallback(async () => {
     if (!api.configured) return;
     try {
@@ -30,12 +28,6 @@ export default function SetupScreen() {
       setStatus(s);
       setStats(st);
       setPrefs(p);
-      setDraft({
-        min: p.min_price?.toString() ?? '',
-        max: p.max_price?.toString() ?? '',
-        sizes: p.size_terms.join(', '),
-        exclude: p.exclude_terms.join(', '),
-      });
       setStores(so);
       setError(null);
     } catch (e) {
@@ -52,15 +44,12 @@ export default function SetupScreen() {
     }, [ready, load]),
   );
 
-  const savePrefs = async (update: Partial<Prefs>) => {
-    setSaving(true);
+  const savePref = async (update: Partial<Prefs>) => {
     try {
       setPrefs(await api.setPrefs(update));
       bumpFeed();
     } catch (e) {
       setError((e as Error).message);
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -73,7 +62,7 @@ export default function SetupScreen() {
     }
   };
 
-  const refreshAll = async () => {
+  const searchAgain = async () => {
     try {
       track((await api.refresh(true)).run);
     } catch (e) {
@@ -81,19 +70,32 @@ export default function SetupScreen() {
     }
   };
 
-  const ours = stats?.ours;
-  const base = stats?.baseline;
+  const connect = async (keys: KeysIn) => {
+    const res = await api.saveKeys(keys); // throws with the server's explanation if a key is rejected
+    setStatus((s) => (s ? { ...s, sources: res.sources } : s));
+  };
+
+  const disconnect = async (source: SourceName) => {
+    try {
+      const res = await api.forgetKeys(source);
+      setStatus((s) => (s ? { ...s, sources: res.sources } : s));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const sources = status?.sources;
 
   return (
     <ScrollView style={{ backgroundColor: t.bg }} contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
       <View style={styles.inner}>
         <Section title="Server">
           {Platform.OS === 'web' && !connection.serverUrl ? (
-            <Muted>Connected to the server that hosts this page.</Muted>
+            <Muted>Connected to the shopr server running on this computer.</Muted>
           ) : (
             <Muted>
-              The address of the shopr server on your computer, e.g. http://192.168.1.20:8000 on the same Wi-Fi, or a
-              tunnel URL.
+              The address shown in the shopr window on your computer, e.g. http://192.168.1.20:8000. Your phone needs to be on
+              the same Wi-Fi.
             </Muted>
           )}
           {Platform.OS !== 'web' && (
@@ -101,84 +103,63 @@ export default function SetupScreen() {
             <ConnectionForm key={`${connection.serverUrl}|${connection.token}`} initial={connection} onSave={setConnection} />
           )}
           <ErrorText message={error} />
-          {status && (
-            <View style={{ gap: 4 }}>
-              <Muted>Image model: {status.embedder}</Muted>
-              <Muted>
-                Sources: Shopify shops ({status.counts.stores}) · eBay {status.sources.ebay ? 'on' : 'off'} · Etsy{' '}
-                {status.sources.etsy ? 'on' : 'off'} · Claude queries {status.sources.claude ? 'on' : 'off'}
-              </Muted>
-              <Muted>
-                {status.counts.listings} listings stored, {status.counts.analyzed} analyzed
-              </Muted>
-            </View>
-          )}
+          {status && <Muted>Image matching: {status.embedder === 'ready' ? 'ready' : status.embedder}</Muted>}
         </Section>
 
-        {stats && (
-          <Section title="Is it working?">
-            <Muted>
-              The feed blindly mixes shopr’s taste ranking with plain keyword search (what you’d get typing the same
-              searches into the shops). If shopr’s picks get liked a lot more often, the idea works.
-            </Muted>
-            <View style={styles.statsRow}>
-              <View style={styles.stat}>
-                <Text style={[styles.statValue, { color: t.accent }]}>{pct(ours?.like_rate)}</Text>
-                <Muted style={{ textAlign: 'center' }}>
-                  shopr picks liked{'\n'}({ours?.like ?? 0}/{ours?.rated ?? 0})
-                </Muted>
-              </View>
-              <View style={styles.stat}>
-                <Text style={[styles.statValue, { color: t.muted }]}>{pct(base?.like_rate)}</Text>
-                <Muted style={{ textAlign: 'center' }}>
-                  keyword search liked{'\n'}({base?.like ?? 0}/{base?.rated ?? 0})
-                </Muted>
-              </View>
-            </View>
-            <Muted>
-              Of the first {stats.ours_first_50.rated} shopr picks you rated, you liked {stats.ours_first_50.liked}. Rate at
-              least 50 of each for a fair read.
-            </Muted>
-          </Section>
-        )}
-
-        {prefs && (
-          <Section title="Filters">
-            <View style={styles.row}>
-              <Field value={draft.min} onChangeText={(min) => setDraft({ ...draft, min })} placeholder="Min $" inputMode="numeric" style={{ flex: 1 }} />
-              <Field value={draft.max} onChangeText={(max) => setDraft({ ...draft, max })} placeholder="Max $" inputMode="numeric" style={{ flex: 1 }} />
-            </View>
-            <Field value={draft.sizes} onChangeText={(sizes) => setDraft({ ...draft, sizes })} placeholder="Your sizes, e.g. M, 38, 32 (blank = any)" />
-            <Muted style={{ fontSize: 13 }}>Listings with no size info are kept.</Muted>
-            <Field value={draft.exclude} onChangeText={(exclude) => setDraft({ ...draft, exclude })} placeholder="Hide titles containing…" />
-            <Button
-              title="Apply filters"
-              loading={saving}
-              onPress={() =>
-                savePrefs({
-                  min_price: draft.min.trim() ? Number(draft.min) : null,
-                  max_price: draft.max.trim() ? Number(draft.max) : null,
-                  size_terms: splitList(draft.sizes),
-                  exclude_terms: splitList(draft.exclude),
-                })
-              }
+        {sources && (
+          <Section title="Where shopr searches">
+            <SourceBlock
+              name="eBay"
+              connected={sources.ebay}
+              blurb="The biggest secondhand marketplace. shopr searches it with your styles and your moodboard photos."
+              steps={[
+                { text: 'Make a free account at developer.ebay.com', url: 'https://developer.ebay.com/signin' },
+                { text: 'Open "Application Keys" and create a Production keyset (any name, e.g. shopr)', url: 'https://developer.ebay.com/my/keys' },
+                { text: 'Paste the App ID (Client ID) and Cert ID (Client Secret) below' },
+              ]}
+              fields={[
+                { key: 'ebay_client_id', label: 'App ID (Client ID)' },
+                { key: 'ebay_client_secret', label: 'Cert ID (Client Secret)', secret: true },
+              ]}
+              onConnect={connect}
+              onDisconnect={() => disconnect('ebay')}
             />
-            <View style={styles.switchRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: t.text }}>Blind test mode</Text>
-                <Muted style={{ fontSize: 13 }}>Mix in keyword-search results to measure the ranking.</Muted>
-              </View>
-              <Switch value={prefs.blind_test} onValueChange={(v) => savePrefs({ blind_test: v })} />
-            </View>
+            <SourceBlock
+              name="Etsy"
+              optional
+              connected={sources.etsy}
+              blurb="Lots of real vintage."
+              steps={[
+                { text: 'Create an app at etsy.com/developers', url: 'https://www.etsy.com/developers/your-apps' },
+                { text: 'Paste its keystring and shared secret below' },
+              ]}
+              fields={[
+                { key: 'etsy_keystring', label: 'Keystring' },
+                { key: 'etsy_shared_secret', label: 'Shared secret', secret: true },
+              ]}
+              onConnect={connect}
+              onDisconnect={() => disconnect('etsy')}
+            />
+            <SourceBlock
+              name="Smarter searches (Claude)"
+              optional
+              connected={sources.claude}
+              blurb="Claude looks at your moodboard and writes better search terms. Uses a little paid API credit per search."
+              steps={[{ text: 'Create an API key at console.anthropic.com', url: 'https://console.anthropic.com/settings/keys' }]}
+              fields={[{ key: 'anthropic_api_key', label: 'API key', secret: true }]}
+              onConnect={connect}
+              onDisconnect={() => disconnect('claude')}
+            />
+            <Muted style={{ fontSize: 13 }}>
+              Depop, Grailed, Poshmark and Vinted don&apos;t let apps search them. Use the links under Moodboard → Styles to
+              open your searches there.
+            </Muted>
           </Section>
         )}
 
-        {status && (
-          <Section title={`Shops · ${stores.filter((s) => s.enabled).length} on`}>
-            <Muted>
-              Independent vintage and archive shops on Shopify. shopr pulls their whole catalog and ranks it against your
-              board.
-            </Muted>
+        {status && prefs && (
+          <Section title={`Independent shops · ${stores.filter((s) => s.enabled).length} on`}>
+            <Muted>Vintage and archive shops that shopr searches directly. Add any shop that runs on Shopify.</Muted>
             <View style={styles.row}>
               <Field value={newStore} onChangeText={setNewStore} placeholder="shop-domain.com" style={{ flex: 1 }} inputMode="url" />
               <Button
@@ -197,10 +178,7 @@ export default function SetupScreen() {
               <View key={s.domain} style={[styles.storeRow, { borderColor: t.border }]}>
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: t.text }}>{s.name || s.domain}</Text>
-                  <Muted style={{ fontSize: 12 }}>
-                    {s.domain}
-                    {s.last_fetched ? ` · ${s.listings} in stock` : ''}
-                  </Muted>
+                  <Muted style={{ fontSize: 12 }}>{s.domain}</Muted>
                 </View>
                 <Switch value={s.enabled} onValueChange={(v) => storeAction(() => api.setStoreEnabled(s.domain, v))} />
                 <Pressable onPress={() => storeAction(() => api.deleteStore(s.domain))} accessibilityRole="button" hitSlop={8}>
@@ -208,6 +186,40 @@ export default function SetupScreen() {
                 </Pressable>
               </View>
             ))}
+            <View style={styles.switchRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: t.text }}>Scan whole shop catalogs</Text>
+                <Muted style={{ fontSize: 13 }}>Finds things keyword search misses, but searches take several minutes.</Muted>
+              </View>
+              <Switch value={prefs.deep_scan} onValueChange={(v) => savePref({ deep_scan: v })} />
+            </View>
+          </Section>
+        )}
+
+        {stats && prefs && (
+          <Section title="Is it working?">
+            <Muted>
+              Your feed secretly mixes shopr&apos;s picks with plain keyword-search results. If you open and save
+              shopr&apos;s picks more often, matching by look beats keyword search.
+            </Muted>
+            <View style={styles.statsRow}>
+              <View style={styles.stat}>
+                <Text style={[styles.statValue, { color: t.accent }]}>{stats.ours.opens + stats.ours.saves}</Text>
+                <Muted style={{ textAlign: 'center' }}>
+                  shopr&apos;s picks{'\n'}{stats.ours.opens} opened · {stats.ours.saves} saved
+                </Muted>
+              </View>
+              <View style={styles.stat}>
+                <Text style={[styles.statValue, { color: t.muted }]}>{stats.baseline.opens + stats.baseline.saves}</Text>
+                <Muted style={{ textAlign: 'center' }}>
+                  keyword search{'\n'}{stats.baseline.opens} opened · {stats.baseline.saves} saved
+                </Muted>
+              </View>
+            </View>
+            <View style={styles.switchRow}>
+              <Text style={{ color: t.text, flex: 1 }}>Run this comparison</Text>
+              <Switch value={prefs.blind_test} onValueChange={(v) => savePref({ blind_test: v })} />
+            </View>
           </Section>
         )}
 
@@ -216,27 +228,120 @@ export default function SetupScreen() {
             {run ? (
               <>
                 <Muted>
-                  Status: {run.status}
-                  {run.detail.queries?.length ? ` · searches: ${run.detail.queries.join(', ')}` : ''}
+                  {run.status === 'running' ? 'Running' : run.status === 'done' ? 'Finished' : 'Stopped with an error'}
+                  {run.detail.queries?.length ? ` · searched for: ${run.detail.queries.join(', ')}` : ''}
                 </Muted>
-                <Text style={[styles.log, { color: t.muted }]}>{(run.detail.log ?? []).slice(-12).join('\n')}</Text>
+                <Text style={[styles.log, { color: t.muted }]}>{(run.detail.log ?? []).slice(-10).join('\n')}</Text>
                 {!!run.detail.errors?.length && (
-                  <Text style={[styles.log, { color: t.nope }]}>{run.detail.errors.slice(0, 8).join('\n')}</Text>
+                  <Text style={[styles.log, { color: t.nope }]}>{run.detail.errors.slice(0, 6).join('\n')}</Text>
                 )}
               </>
             ) : (
               <Muted>No searches yet.</Muted>
             )}
-            <Button
-              title="Re-pull all shop catalogs now"
-              variant="secondary"
-              onPress={refreshAll}
-              disabled={run?.status === 'running'}
-            />
+            <Button title="Search again" variant="secondary" onPress={searchAgain} disabled={run?.status === 'running'} />
           </Section>
         )}
       </View>
     </ScrollView>
+  );
+}
+
+function SourceBlock({
+  name,
+  connected,
+  optional,
+  blurb,
+  steps,
+  fields,
+  onConnect,
+  onDisconnect,
+}: {
+  name: string;
+  connected: boolean;
+  optional?: boolean;
+  blurb: string;
+  steps: { text: string; url?: string }[];
+  fields: { key: keyof KeysIn; label: string; secret?: boolean }[];
+  onConnect: (keys: KeysIn) => Promise<void>;
+  onDisconnect: () => void;
+}) {
+  const t = useTheme();
+  const [open, setOpen] = useState(!optional && !connected);
+  const [values, setValues] = useState<KeysIn>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onConnect(values);
+      setValues({});
+      setOpen(false);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <View style={[styles.source, { borderColor: t.border }]}>
+      <View style={styles.row}>
+        <Text style={{ color: t.text, fontWeight: '700', fontSize: 16, flex: 1 }}>
+          {name}
+          {optional ? <Text style={{ color: t.muted, fontWeight: '400' }}> · optional</Text> : null}
+        </Text>
+        {connected ? (
+          <Text style={{ color: t.like, fontWeight: '700' }}>Connected ✓</Text>
+        ) : (
+          !open && (
+            <Pressable onPress={() => setOpen(true)} hitSlop={8} accessibilityRole="button">
+              <Text style={{ color: t.accent, fontWeight: '700' }}>Connect</Text>
+            </Pressable>
+          )
+        )}
+      </View>
+      <Muted style={{ fontSize: 13 }}>{blurb}</Muted>
+      {connected && (
+        <Pressable onPress={onDisconnect} hitSlop={8} accessibilityRole="button">
+          <Text style={{ color: t.muted, fontSize: 13 }}>Disconnect</Text>
+        </Pressable>
+      )}
+      {!connected && open && (
+        <View style={{ gap: 8 }}>
+          {steps.map((s, i) => (
+            <Text key={s.text} style={{ color: t.text, lineHeight: 20 }}>
+              {i + 1}.{' '}
+              {s.url ? (
+                <Text style={{ color: t.accent, textDecorationLine: 'underline' }} onPress={() => openListing(s.url!)}>
+                  {s.text}
+                </Text>
+              ) : (
+                s.text
+              )}
+            </Text>
+          ))}
+          {fields.map((f) => (
+            <Field
+              key={f.key}
+              value={values[f.key] ?? ''}
+              onChangeText={(v) => setValues((cur) => ({ ...cur, [f.key]: v }))}
+              placeholder={f.label}
+              secureTextEntry={f.secret}
+            />
+          ))}
+          <ErrorText message={error} />
+          <Button
+            title={busy ? 'Checking…' : `Connect ${name.split(' ')[0]}`}
+            onPress={submit}
+            loading={busy}
+            disabled={fields.some((f) => !(values[f.key] ?? '').trim())}
+          />
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -246,17 +351,10 @@ function ConnectionForm({ initial, onSave }: { initial: Connection; onSave: (c: 
   return (
     <>
       <Field value={server} onChangeText={setServer} placeholder="http://192.168.1.20:8000" inputMode="url" />
-      <Field value={token} onChangeText={setToken} placeholder="Access token (if SHOPR_TOKEN is set)" secureTextEntry />
+      <Field value={token} onChangeText={setToken} placeholder="Access token (only if you set SHOPR_TOKEN)" secureTextEntry />
       <Button title="Save and connect" onPress={() => onSave({ serverUrl: normalizeServer(server), token: token.trim() })} />
     </>
   );
-}
-
-function splitList(text: string): string[] {
-  return text
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
 }
 
 const styles = StyleSheet.create({
@@ -268,5 +366,6 @@ const styles = StyleSheet.create({
   stat: { flex: 1, alignItems: 'center', gap: 2 },
   statValue: { fontSize: 32, fontWeight: '800' },
   storeRow: { flexDirection: 'row', alignItems: 'center', gap: 12, borderTopWidth: 1, paddingTop: 10 },
+  source: { borderTopWidth: 1, paddingTop: 12, gap: 8 },
   log: { fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }), fontSize: 12, lineHeight: 17 },
 });

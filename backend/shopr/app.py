@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import keys, pinboard
 from .config import Settings, settings as default_settings
 from .db import DB, from_blob
 from .embedder import make_embedder
@@ -25,18 +26,43 @@ from .ingest import IngestError, decode_image, fetch_url_media, is_video, save_i
 from .sources.shopify import normalize_domain
 
 
+def _aspect_of(path: Path) -> float:
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            return im.height / im.width
+    except Exception:
+        return 1.25
+
+
 class UrlIn(BaseModel):
     url: str
 
 
-class FeedbackIn(BaseModel):
+class ListingRef(BaseModel):
     listing_id: str
-    action: str  # like | nope
 
 
 class StoreIn(BaseModel):
     domain: str
     name: str | None = None
+
+
+class KeysIn(BaseModel):
+    ebay_client_id: str | None = None
+    ebay_client_secret: str | None = None
+    etsy_keystring: str | None = None
+    etsy_shared_secret: str | None = None
+    anthropic_api_key: str | None = None
+
+
+class BoardPatch(BaseModel):
+    x: float | None = None
+    y: float | None = None
+    w: float | None = None
+    rot: float | None = None
+    z: int | None = None
 
 
 class StorePatch(BaseModel):
@@ -46,6 +72,7 @@ class StorePatch(BaseModel):
 def create_app(settings: Settings | None = None, embedder_factory=None) -> FastAPI:
     s = settings or default_settings
     db = DB(s.db_path)
+    keys.load_saved(s, db)
     engine = Engine(s, db, embedder_factory or (lambda: make_embedder(s.embedder)))
     token = os.environ.get("SHOPR_TOKEN", "")
     background: set[asyncio.Task] = set()
@@ -83,7 +110,7 @@ def create_app(settings: Settings | None = None, embedder_factory=None) -> FastA
         )[0]
         return {
             "embedder": engine.embedder_status,
-            "sources": {"shopify": True, "ebay": s.ebay_enabled, "etsy": s.etsy_enabled, "claude": s.claude_enabled},
+            "sources": _sources(),
             "counts": dict(counts),
             "latest_run": _latest_run(),
             "auth_required": bool(token),
@@ -91,11 +118,33 @@ def create_app(settings: Settings | None = None, embedder_factory=None) -> FastA
 
     # ------------------------------------------------------------------ board
 
+    def _ensure_layout() -> None:
+        """Give photos from before the pinboard a size and a spot."""
+        rows = db.board_items()
+        placed = [dict(r) for r in rows if r["x"] is not None and r["aspect"] is not None]
+        for r in rows:
+            if r["aspect"] is None or r["x"] is None:
+                aspect = r["aspect"] or _aspect_of(s.media_dir / r["path"])
+                spot = pinboard.place(placed, aspect, seed=r["id"])
+                db.update_board_item(r["id"], {"aspect": aspect, **spot})
+                placed.append({**spot, "aspect": aspect})
+            if r["z"] is None:
+                db.update_board_item(r["id"], {"z": r["id"]})
+
     def _board_json() -> list[dict[str, Any]]:
+        _ensure_layout()
         return [
-            {"id": r["id"], "kind": r["kind"], "image": f"/media/{r['path']}", "origin": r["origin"], "group": r["group_key"]}
+            {
+                "id": r["id"], "kind": r["kind"], "image": f"/media/{r['path']}", "origin": r["origin"],
+                "group": r["group_key"], "aspect": r["aspect"], "x": r["x"], "y": r["y"], "w": r["w"],
+                "rot": r["rot"], "z": r["z"],
+            }
             for r in db.board_items()
         ]
+
+    def _new_spot(aspect: float, seed: int) -> dict[str, float]:
+        placed = [dict(r) for r in db.board_items() if r["x"] is not None and r["aspect"] is not None]
+        return pinboard.place(placed, aspect, seed)
 
     @app.get("/api/board")
     async def board() -> list[dict[str, Any]]:
@@ -112,11 +161,16 @@ def create_app(settings: Settings | None = None, embedder_factory=None) -> FastA
                 if kept and float(np.max(np.array(kept) @ v)) > 0.93:
                     continue  # same shot; one frame is enough
                 kept.append(v)
-                ids.append(db.add_board_item("video_frame", save_image(img, s.media_dir), origin, v, group))
+                aspect = img.height / img.width
+                ids.append(db.add_board_item(
+                    "video_frame", save_image(img, s.media_dir), origin, v, group,
+                    aspect=aspect, spot=_new_spot(aspect, time.time_ns()),
+                ))
             return ids
         img = await asyncio.to_thread(decode_image, data)
         vec = (await asyncio.to_thread(emb.embed_images, [img]))[0]
-        return [db.add_board_item(kind, save_image(img, s.media_dir), origin, vec)]
+        aspect = img.height / img.width
+        return [db.add_board_item(kind, save_image(img, s.media_dir), origin, vec, aspect=aspect, spot=_new_spot(aspect, time.time_ns()))]
 
     @app.post("/api/board/upload")
     async def upload(files: list[UploadFile] = File(...)) -> dict[str, Any]:
@@ -136,6 +190,23 @@ def create_app(settings: Settings | None = None, embedder_factory=None) -> FastA
         except IngestError as e:
             raise HTTPException(400, str(e)) from e
         return {"added": added, "board": _board_json()}
+
+    @app.patch("/api/board/{item_id}")
+    async def move_board_item(item_id: int, body: BoardPatch) -> dict[str, Any]:
+        """Save where a photo was dragged, how big it is, its tilt and stacking."""
+        if not db.query("SELECT 1 FROM board_items WHERE id = ?", (item_id,)):
+            raise HTTPException(404, "No such photo on the board")
+        db.update_board_item(item_id, pinboard.clamp_patch(body.model_dump()))
+        return {"ok": True}
+
+    @app.post("/api/board/arrange")
+    async def arrange_board() -> dict[str, Any]:
+        """Tidy up: lay all photos out again in neat columns."""
+        _ensure_layout()
+        items = [{"id": r["id"], "aspect": r["aspect"]} for r in db.board_items()]
+        for item_id, spot in pinboard.arrange(items).items():
+            db.update_board_item(item_id, spot)
+        return {"board": _board_json()}
 
     @app.delete("/api/board/{item_id}")
     async def delete_board_item(item_id: int) -> dict[str, Any]:
@@ -210,61 +281,104 @@ def create_app(settings: Settings | None = None, embedder_factory=None) -> FastA
 
     @app.get("/api/feed")
     async def feed(offset: int = 0, limit: int = 30) -> dict[str, Any]:
+        hidden = "SELECT listing_id FROM feedback WHERE action = 'nope'"
         rows = db.query(
-            "SELECT f.position, f.score, f.cluster, l.* FROM feed f JOIN listings l ON l.id = f.listing_id "
-            "WHERE f.listing_id NOT IN (SELECT listing_id FROM feedback) ORDER BY f.position LIMIT ? OFFSET ?",
+            "SELECT f.position, f.score, f.cluster, l.*, "
+            "EXISTS(SELECT 1 FROM feedback s WHERE s.listing_id = l.id AND s.action = 'like') AS saved "
+            f"FROM feed f JOIN listings l ON l.id = f.listing_id WHERE f.listing_id NOT IN ({hidden}) "
+            "ORDER BY f.position LIMIT ? OFFSET ?",
             (limit, offset),
         )
-        total = db.query("SELECT COUNT(*) AS n FROM feed WHERE listing_id NOT IN (SELECT listing_id FROM feedback)")[0]["n"]
-        # The arm is deliberately not returned: the test is blind.
-        return {"items": [{**_listing_json(r), "score": r["score"], "cluster": r["cluster"]} for r in rows], "remaining": total}
+        total = db.query(f"SELECT COUNT(*) AS n FROM feed WHERE listing_id NOT IN ({hidden})")[0]["n"]
+        # Which ranking each item came from is deliberately not returned: the test is blind.
+        items = [{**_listing_json(r), "score": r["score"], "cluster": r["cluster"], "saved": bool(r["saved"])} for r in rows]
+        return {"items": items, "total": total}
 
-    @app.post("/api/feedback")
-    async def feedback(body: FeedbackIn) -> dict[str, Any]:
-        if body.action not in ("like", "nope"):
-            raise HTTPException(400, "action must be 'like' or 'nope'")
-        arm = db.query("SELECT arm FROM feed WHERE listing_id = ?", (body.listing_id,))
+    def _record(listing_id: str, kind: str) -> None:
+        arm = db.query("SELECT arm FROM feed WHERE listing_id = ?", (listing_id,))
         db.execute(
-            "INSERT INTO feedback(listing_id, action, arm, created_at) VALUES(?,?,?,?) "
-            "ON CONFLICT(listing_id) DO UPDATE SET action = excluded.action, created_at = excluded.created_at",
-            (body.listing_id, body.action, arm[0]["arm"] if arm else None, time.time()),
+            "INSERT INTO events(listing_id, kind, arm, created_at) VALUES(?,?,?,?)",
+            (listing_id, kind, arm[0]["arm"] if arm else None, time.time()),
         )
-        n = db.query("SELECT COUNT(*) AS n FROM feedback")[0]["n"]
-        reranked = False
-        # Every 10 ratings, re-rank the stored listings so feedback takes effect.
-        if n % 10 == 0 and not engine.refresh_lock.locked():
-            await engine.rank()
-            reranked = True
-        return {"ok": True, "rated": n, "reranked": reranked}
 
-    @app.delete("/api/feedback/{listing_id:path}")
-    async def undo_feedback(listing_id: str) -> dict[str, Any]:
-        db.execute("DELETE FROM feedback WHERE listing_id = ?", (listing_id,))
+    @app.post("/api/opened")
+    async def opened(body: ListingRef) -> dict[str, Any]:
+        _record(body.listing_id, "open")
         return {"ok": True}
 
-    @app.get("/api/likes")
-    async def likes() -> list[dict[str, Any]]:
+    @app.post("/api/saved")
+    async def save(body: ListingRef) -> dict[str, Any]:
+        db.execute(
+            "INSERT INTO feedback(listing_id, action, arm, created_at) VALUES(?, 'like', NULL, ?) "
+            "ON CONFLICT(listing_id) DO UPDATE SET action = 'like', created_at = excluded.created_at",
+            (body.listing_id, time.time()),
+        )
+        _record(body.listing_id, "save")
+        return {"ok": True}
+
+    @app.delete("/api/saved/{listing_id:path}")
+    async def unsave(listing_id: str) -> dict[str, Any]:
+        db.execute("DELETE FROM feedback WHERE listing_id = ? AND action = 'like'", (listing_id,))
+        _record(listing_id, "unsave")
+        return {"ok": True}
+
+    @app.get("/api/saved")
+    async def saved() -> list[dict[str, Any]]:
         rows = db.query(
             "SELECT l.* FROM feedback f JOIN listings l ON l.id = f.listing_id WHERE f.action = 'like' ORDER BY f.created_at DESC"
         )
-        return [_listing_json(r) for r in rows]
+        return [{**_listing_json(r), "saved": True} for r in rows]
 
     @app.get("/api/stats")
     async def stats() -> dict[str, Any]:
-        rows = db.query("SELECT arm, action, COUNT(*) AS n FROM feedback WHERE arm IS NOT NULL GROUP BY arm, action")
-        arms: dict[str, dict[str, int]] = {"ours": {"like": 0, "nope": 0}, "baseline": {"like": 0, "nope": 0}}
+        """Blind test results: how many listings from each ranking you opened or saved.
+        Team-draft interleaving shows both rankings equally, so whichever gets more
+        opens and saves is the one that finds better listings for you."""
+        rows = db.query(
+            "SELECT arm, kind, COUNT(DISTINCT listing_id) AS n FROM events "
+            "WHERE arm IS NOT NULL AND kind IN ('open', 'save') GROUP BY arm, kind"
+        )
+        out = {arm: {"opens": 0, "saves": 0} for arm in ("ours", "baseline")}
         for r in rows:
-            arms.setdefault(r["arm"], {"like": 0, "nope": 0})[r["action"]] = r["n"]
-        out = {}
-        for arm, c in arms.items():
-            total = c["like"] + c["nope"]
-            out[arm] = {**c, "rated": total, "like_rate": (c["like"] / total) if total else None}
-        # The Phase 0 question: of the first 50 taste-ranked items you rated, how many would you buy?
-        first = db.query("SELECT action FROM feedback WHERE arm = 'ours' ORDER BY created_at LIMIT 50")
-        out["ours_first_50"] = {"rated": len(first), "liked": sum(1 for r in first if r["action"] == "like")}
+            out.setdefault(r["arm"], {"opens": 0, "saves": 0})["opens" if r["kind"] == "open" else "saves"] = r["n"]
         return out
 
     # ------------------------------------------------------------------ prefs + stores
+
+    # ------------------------------------------------------------------ API keys
+
+    def _sources() -> dict[str, bool]:
+        return {"shopify": True, "ebay": s.ebay_enabled, "etsy": s.etsy_enabled, "claude": s.claude_enabled}
+
+    @app.put("/api/keys")
+    async def save_keys(body: KeysIn) -> dict[str, Any]:
+        values = {k: v.strip() for k, v in body.model_dump().items() if v and v.strip()}
+        try:
+            if "ebay_client_id" in values or "ebay_client_secret" in values:
+                cid = values.get("ebay_client_id") or s.ebay_client_id
+                secret = values.get("ebay_client_secret") or s.ebay_client_secret
+                if not (cid and secret):
+                    raise keys.KeyCheckFailed("Enter both the eBay App ID and the Cert ID.")
+                await keys.check_ebay(s, cid, secret)
+            if "etsy_keystring" in values or "etsy_shared_secret" in values:
+                ks = values.get("etsy_keystring") or s.etsy_keystring
+                secret = values.get("etsy_shared_secret") or s.etsy_shared_secret
+                if not (ks and secret):
+                    raise keys.KeyCheckFailed("Enter both the Etsy keystring and the shared secret.")
+                await keys.check_etsy(ks, secret)
+            if "anthropic_api_key" in values:
+                await keys.check_claude(values["anthropic_api_key"])
+        except keys.KeyCheckFailed as e:
+            raise HTTPException(400, str(e)) from e
+        keys.save(s, db, values)
+        return {"sources": _sources()}
+
+    @app.delete("/api/keys/{source}")
+    async def forget_keys(source: str) -> dict[str, Any]:
+        if source not in keys.SOURCES:
+            raise HTTPException(404, "Unknown source")
+        keys.forget(s, db, source)
+        return {"sources": _sources()}
 
     @app.get("/api/prefs")
     async def get_prefs() -> dict[str, Any]:

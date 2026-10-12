@@ -16,9 +16,23 @@ export type Listing = {
   era?: string | null;
   score?: number | null;
   cluster?: number | null;
+  saved?: boolean;
 };
 
-export type BoardItem = { id: number; kind: string; image: string; origin: string | null; group: string | null };
+/** A photo on the pinboard. Positions are in board units (the board is 1000 wide). */
+export type BoardItem = {
+  id: number;
+  kind: string;
+  image: string;
+  origin: string | null;
+  group: string | null;
+  aspect: number;
+  x: number;
+  y: number;
+  w: number;
+  rot: number;
+  z: number;
+};
 
 export type Cluster = {
   index: number;
@@ -48,21 +62,33 @@ export type Status = {
 export type Prefs = {
   min_price: number | null;
   max_price: number | null;
+  sizes_tops: string[];
+  sizes_waist: string[];
+  sizes_shoes: string[];
   size_terms: string[];
   exclude_terms: string[];
   blind_test: boolean;
-  max_age_days: number;
+  deep_scan: boolean;
+  onboarded: boolean;
 };
+
+export type KeysIn = Partial<{
+  ebay_client_id: string;
+  ebay_client_secret: string;
+  etsy_keystring: string;
+  etsy_shared_secret: string;
+  anthropic_api_key: string;
+}>;
 
 export type Store = { domain: string; name: string | null; enabled: boolean; last_fetched: number | null; listings: number };
 
-type ArmStats = { like: number; nope: number; rated: number; like_rate: number | null };
-export type Stats = { ours: ArmStats; baseline: ArmStats; ours_first_50: { rated: number; liked: number } };
+type ArmStats = { opens: number; saves: number };
+/** Blind test: opens and saves credited to shopr's ranking vs plain keyword search. */
+export type Stats = { ours: ArmStats; baseline: ArmStats };
 
 export type Connection = { serverUrl: string; token: string };
 
 const STORAGE_KEY = 'shopr.connection';
-
 
 export async function loadConnection(): Promise<Connection> {
   try {
@@ -137,6 +163,9 @@ export class Api {
   board = () => this.request<BoardItem[]>('/api/board');
   profile = () => this.request<{ clusters: Cluster[] }>('/api/profile');
   deleteBoardItem = (id: number) => this.request<{ board: BoardItem[] }>(`/api/board/${id}`, { method: 'DELETE' });
+  moveBoardItem = (id: number, patch: Partial<Pick<BoardItem, 'x' | 'y' | 'w' | 'rot' | 'z'>>) =>
+    this.request<{ ok: boolean }>(`/api/board/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+  arrangeBoard = () => this.request<{ board: BoardItem[] }>('/api/board/arrange', { method: 'POST' });
   addUrl = (url: string) =>
     this.request<{ added: number[]; board: BoardItem[] }>('/api/board/url', { method: 'POST', body: JSON.stringify({ url }) });
 
@@ -151,17 +180,21 @@ export class Api {
     this.request<{ started: boolean; run: Run | null }>(`/api/refresh${force ? '?force=true' : ''}`, { method: 'POST' });
   latestRun = () => this.request<Run | null>('/api/runs/latest');
 
-  feed = (offset = 0, limit = 30) =>
-    this.request<{ items: Listing[]; remaining: number }>(`/api/feed?offset=${offset}&limit=${limit}`);
-  feedback = (listing_id: string, action: 'like' | 'nope') =>
-    this.request<{ ok: boolean; rated: number; reranked: boolean }>('/api/feedback', {
-      method: 'POST',
-      body: JSON.stringify({ listing_id, action }),
-    });
-  undoFeedback = (listing_id: string) =>
-    this.request<{ ok: boolean }>(`/api/feedback/${encodeURIComponent(listing_id)}`, { method: 'DELETE' });
-  likes = () => this.request<Listing[]>('/api/likes');
+  feed = (offset = 0, limit = 40) =>
+    this.request<{ items: Listing[]; total: number }>(`/api/feed?offset=${offset}&limit=${limit}`);
+  opened = (listing_id: string) =>
+    this.request<{ ok: boolean }>('/api/opened', { method: 'POST', body: JSON.stringify({ listing_id }) });
+  save = (listing_id: string) =>
+    this.request<{ ok: boolean }>('/api/saved', { method: 'POST', body: JSON.stringify({ listing_id }) });
+  unsave = (listing_id: string) =>
+    this.request<{ ok: boolean }>(`/api/saved/${encodeURIComponent(listing_id)}`, { method: 'DELETE' });
+  saved = () => this.request<Listing[]>('/api/saved');
   stats = () => this.request<Stats>('/api/stats');
+
+  saveKeys = (keys: KeysIn) =>
+    this.request<{ sources: Status['sources'] }>('/api/keys', { method: 'PUT', body: JSON.stringify(keys) });
+  forgetKeys = (source: 'ebay' | 'etsy' | 'claude') =>
+    this.request<{ sources: Status['sources'] }>(`/api/keys/${source}`, { method: 'DELETE' });
 
   prefs = () => this.request<Prefs>('/api/prefs');
   setPrefs = (p: Partial<Prefs>) => this.request<Prefs>('/api/prefs', { method: 'PUT', body: JSON.stringify(p) });

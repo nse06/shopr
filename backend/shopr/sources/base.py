@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,3 +31,26 @@ class SearchResult:
 
 class SourceError(Exception):
     pass
+
+
+_SIZE_TAG = re.compile(r"(?:^|[|:_\s])size(?: adults)?[|:\s]+([a-z0-9][a-z0-9 ./-]{0,10})$", re.I)
+_SIZE_IN_TITLE = re.compile(
+    r"(?:\bsz\.?|\bsize)\s*[:\-]?\s*(?P<a>[0-9]{1,2}(?:\.5)?(?:\s*x\s*[0-9]{2})?|xxs|xs|s|m|l|xl|xxl|xxxl|[0-9]xl)\b"
+    r"|\s[-|]\s*(?P<b>xxs|xs|s|m|l|xl|xxl|xxxl|[0-9]xl)\b"
+    r"|\bw(?P<c>[0-9]{2})\b",  # jeans: W32 x L30 -> waist 32
+    re.I,
+)
+
+
+def guess_sizes(title: str, tags: list[str]) -> list[str]:
+    """Search results don't include variants, so read the size from tags
+    ("Size|L", "size:M") or the title ("... - L", "SZ M", "Size 32")."""
+    sizes: list[str] = []
+    for tag in tags:
+        m = _SIZE_TAG.search(tag.strip())
+        if m:
+            sizes.append(m.group(1).strip().upper())
+    m = _SIZE_IN_TITLE.search(title)
+    if m:
+        sizes.append((m.group("a") or m.group("b") or m.group("c")).strip().upper())
+    return list(dict.fromkeys(sizes))

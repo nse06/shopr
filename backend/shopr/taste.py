@@ -167,8 +167,9 @@ def _dedupe_words(q: str) -> str:
 class TasteProfile:
     board: np.ndarray            # (n, d) moodboard image vectors
     clusters: list[Cluster]
-    liked: np.ndarray | None = None
-    noped: np.ndarray | None = None
+    liked: np.ndarray | None = None   # saved
+    noped: np.ndarray | None = None   # hidden
+    opened: np.ndarray | None = None  # opened (a weaker signal than saving)
 
     @property
     def centroids(self) -> np.ndarray:
@@ -179,7 +180,7 @@ class TasteProfile:
 
         score = 0.5 * mean of top-3 similarities to individual board images
               + 0.5 * similarity to the nearest cluster centroid
-              + 0.3 * (nearest liked item - nearest noped item)   [once feedback exists]
+              + 0.3 * (nearest saved item - nearest hidden item) + 0.1 * nearest opened item
         """
         if len(x) == 0:
             return np.zeros(0), np.zeros(0, dtype=int)
@@ -193,6 +194,8 @@ class TasteProfile:
             score += 0.3 * (x @ self.liked.T).max(axis=1)
         if self.noped is not None and len(self.noped):
             score -= 0.3 * (x @ self.noped.T).max(axis=1)
+        if self.opened is not None and len(self.opened):
+            score += 0.1 * (x @ self.opened.T).max(axis=1)
         return score, best_cluster
 
 
@@ -226,7 +229,9 @@ def passes_filters(listing: dict, prefs: dict, usd_price: float | None) -> bool:
             return False
         if prefs.get("max_price") is not None and usd_price > float(prefs["max_price"]):
             return False
-    size_terms = [s.lower().strip() for s in prefs.get("size_terms") or [] if s.strip()]
+    wanted = [*(prefs.get("sizes_tops") or []), *(prefs.get("sizes_waist") or []),
+              *(prefs.get("sizes_shoes") or []), *(prefs.get("size_terms") or [])]
+    size_terms = [str(s).lower().strip() for s in wanted if str(s).strip()]
     if size_terms:
         sizes = [s.lower() for s in listing.get("sizes") or []]
         if sizes:

@@ -5,7 +5,7 @@ import respx
 from shopr.config import Settings
 from shopr.ingest import image_url_from_html
 from shopr.sources import shopify
-from shopr.sources.base import to_usd
+from shopr.sources.base import SourceError, to_usd
 from shopr.sources.ebay import EbayClient, parse_items
 from shopr.sources.etsy import EtsyClient, parse_listings
 
@@ -130,3 +130,76 @@ def test_to_usd():
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+def test_shopify_parse_suggest():
+    products = [
+        {"id": 7, "title": "Vintage Chore Coat - L", "handle": "chore", "available": True, "price": "115.00",
+         "image": "//cdn.shopify.com/a.jpg?v=2", "tags": ["ATT|Size adults|L"], "type": "Coats", "vendor": "Eddie Bauer",
+         "body": "<p>Pit to pit 24&quot;</p>"},
+        {"id": 8, "title": "Sold", "handle": "sold", "available": False, "price": "1.00", "image": "https://x/y.jpg"},
+        {"id": 9, "title": "No photo", "handle": "nophoto", "available": True, "price": "1.00"},
+    ]
+    out = shopify.parse_suggest("shop.example", products, "GBP")
+    assert [x["id"] for x in out] == ["shopify:shop.example:7"]
+    item = out[0]
+    assert item["image_url"] == "https://cdn.shopify.com/a.jpg?v=2&width=480"
+    assert item["price"] == 115.0 and item["currency"] == "GBP" and item["sizes"] == ["L"]
+    assert item["url"] == "https://shop.example/products/chore"
+    assert 'Pit to pit 24"' in item["description"]
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_shopify_search_store():
+    route = respx.get("https://shop.example/search/suggest.json").mock(
+        return_value=httpx.Response(200, json={"resources": {"results": {"products": [
+            {"id": 1, "title": "Chore coat", "handle": "c", "available": True, "price": "50", "image": "https://x/1.jpg"}
+        ]}}})
+    )
+    async with httpx.AsyncClient() as client:
+        items = await shopify.search_store(client, "shop.example", "chore coat", "USD")
+    assert len(items) == 1
+    params = route.calls[0].request.url.params
+    assert params["q"] == "chore coat" and params["resources[options][unavailable_products]"] == "hide"
+
+    respx.get("https://blocked.example/search/suggest.json").mock(return_value=httpx.Response(404))
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(SourceError):
+            await shopify.search_store(client, "blocked.example", "x", None)
+
+
+def test_guess_sizes():
+    assert shopify.guess_sizes("Chore Coat - L", []) == ["L"]
+    assert shopify.guess_sizes("French Work Jacket SZ M", []) == ["M"]
+    assert shopify.guess_sizes("Levi's 501 W32 x L30", []) == ["32"]
+    assert shopify.guess_sizes("Tee", ["size:XL"]) == ["XL"]
+    assert shopify.guess_sizes("Lost in the M25", []) == []
+
+
+def test_ebay_price_filter():
+    from shopr.sources.ebay import price_filter
+
+    assert price_filter(None, None) is None
+    assert price_filter(20, None) == "price:[20],priceCurrency:USD"
+    assert price_filter(None, 150) == "price:[..150],priceCurrency:USD"
+    assert price_filter(20, 150) == "price:[20..150],priceCurrency:USD"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_ebay_search_sends_price_range_and_reads_sizes():
+    s = Settings(ebay_client_id="id", ebay_client_secret="secret")
+    respx.post("https://api.ebay.com/identity/v1/oauth2/token").mock(
+        return_value=httpx.Response(200, json={"access_token": "tok", "expires_in": 7200})
+    )
+    route = respx.get("https://api.ebay.com/buy/browse/v1/item_summary/search").mock(
+        return_value=httpx.Response(200, json={"itemSummaries": [{
+            "itemId": "v1|1|0", "title": "Vintage Chore Coat Size L", "price": {"value": "80", "currency": "USD"},
+            "image": {"imageUrl": "https://i.ebayimg.com/x/s-l225.jpg"}, "itemWebUrl": "https://www.ebay.com/itm/1",
+        }]})
+    )
+    async with httpx.AsyncClient() as http:
+        res = await EbayClient(s, http).search("chore coat", min_price=20, max_price=150)
+    assert route.calls[0].request.url.params["filter"] == "price:[20..150],priceCurrency:USD"
+    assert res.listings[0]["sizes"] == ["L"]
