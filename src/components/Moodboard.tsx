@@ -1,42 +1,33 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { place, tidy } from "@/lib/board-layout";
 import { importLink, readBoard } from "@/lib/client/api";
+import { useIsPhone } from "@/lib/client/hooks";
 import { processPhoto } from "@/lib/client/images";
 import { newId, setState, useApp, type BoardItem } from "@/lib/client/store";
 import { PinBoard } from "./PinBoard";
+import { SharePanel, useShareState } from "./SharePanel";
 import { StyleRead } from "./StyleRead";
-
-const PHONE = "(max-width: 640px)";
-
-function useIsPhone(): boolean {
-  return useSyncExternalStore(
-    (onChange) => {
-      const mq = window.matchMedia(PHONE);
-      mq.addEventListener("change", onChange);
-      return () => mq.removeEventListener("change", onChange);
-    },
-    () => window.matchMedia(PHONE).matches,
-    () => false,
-  );
-}
 
 function isUrl(text: string): boolean {
   return /^https?:\/\/\S+$/i.test(text.trim());
 }
 
 export function Moodboard() {
-  const { loaded, board, profile, reading, readError, status } = useApp();
+  const { loaded, board, profile, reading, readError, status, publish } = useApp();
   const phone = useIsPhone();
+  const shared = useShareState();
   const [adding, setAdding] = useState(0);
   const [errors, setErrors] = useState<string[]>([]);
   const [linkOpen, setLinkOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [link, setLink] = useState("");
   const [dropping, setDropping] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  // Photo width in board units (the board is 1000 wide): two across on a phone, three on a computer.
-  const width = phone ? 470 : 310;
+  // New photos go into two columns on a phone and four on a computer.
+  const columns = phone ? 2 : 4;
 
   const addBlobs = useCallback(
     async (blobs: Blob[]) => {
@@ -47,9 +38,9 @@ export function Moodboard() {
         try {
           const photo = await processPhoto(blob);
           setState((s) => {
-            const spot = place(s.board, width);
+            const id = newId();
             const z = s.board.reduce((m, i) => Math.max(m, i.z), 0) + 1;
-            const item: BoardItem = { id: newId(), ...photo, ...spot, w: width, z, addedAt: Date.now() };
+            const item: BoardItem = { id, ...photo, ...place(s.board, columns, id), z, addedAt: Date.now() };
             return { board: [...s.board, item] };
           });
         } catch (e) {
@@ -59,7 +50,7 @@ export function Moodboard() {
         }
       }
     },
-    [width],
+    [columns],
   );
 
   const addLink = useCallback(
@@ -137,6 +128,12 @@ export function Moodboard() {
         <div>
           <p className="eyebrow">
             Moodboard{loaded && board.length > 0 ? ` · ${board.length} photo${board.length === 1 ? "" : "s"}` : ""}
+            {shared !== "none" && publish?.handle && (
+              <>
+                {" · "}
+                <Link href={`/u/${publish.handle}`}>shared as @{publish.handle}</Link>
+              </>
+            )}
           </p>
           <h1 className="display display--page">Your moodboard</h1>
         </div>
@@ -148,8 +145,13 @@ export function Moodboard() {
             Add from a link
           </button>
           {board.length > 1 && (
-            <button type="button" className="text-btn" onClick={() => setState((s) => ({ board: tidy(s.board, width) }))}>
+            <button type="button" className="text-btn" onClick={() => setState((s) => ({ board: tidy(s.board, columns) }))}>
               Tidy up
+            </button>
+          )}
+          {(board.length > 0 || shared !== "none") && (
+            <button type="button" className="text-btn" aria-expanded={shareOpen} onClick={() => setShareOpen((v) => !v)}>
+              {shared === "behind" ? "Update your shared board" : shared === "current" ? "Shared" : "Share"}
             </button>
           )}
         </div>
@@ -165,6 +167,8 @@ export function Moodboard() {
           }}
         />
       </header>
+
+      {shareOpen && <SharePanel onClose={() => setShareOpen(false)} />}
 
       {linkOpen && (
         <form

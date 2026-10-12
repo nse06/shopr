@@ -150,8 +150,20 @@ export function Settings() {
               ? "is connected, including photo search."
               : "isn't connected, so only the independent shops are searched. Add EBAY_CLIENT_ID and EBAY_CLIENT_SECRET (Production keys from developer.ebay.com)."}
           </Check>
+          <Check ok={status?.depop}>
+            <b>Depop</b>{" "}
+            {status?.depop
+              ? "is connected through Apify. Depop listings cost about half a cent each in Apify credit, so roughly 10 cents per reply."
+              : "isn't connected. Add APIFY_TOKEN (from apify.com, Settings → API & Integrations) to search Depop too."}
+          </Check>
           <Check ok>
             <b>{status?.shops ?? 20} independent vintage and archive shops</b> are always searched.
+          </Check>
+          <Check ok={status?.sharing}>
+            <b>Sharing</b>{" "}
+            {status?.sharing
+              ? "is on: people can share their boards and browse Explore."
+              : "is off. In Vercel, open Storage, create a Blob store and connect it to this project, so people can share boards."}
           </Check>
           <Check ok={status?.passwordRequired}>
             <b>Password lock</b>{" "}
@@ -177,7 +189,10 @@ export function Settings() {
       <section>
         <div>
           <h2 className="section-title">Your data</h2>
-          <p className="muted">Everything stays in this browser on this device. Each message to your stylist costs a few cents of Claude usage.</p>
+          <p className="muted">
+            Everything stays in this browser on this device, except a board you choose to share. Each message to your stylist costs a few cents of
+            Claude usage.
+          </p>
         </div>
         <div className="danger-zone">
           <button type="button" className="text-btn" onClick={() => clear("chat")} disabled={!chat.length}>

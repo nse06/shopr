@@ -2,49 +2,12 @@
 
 import { readBoard } from "@/lib/client/api";
 import { boardKey, useApp } from "@/lib/client/store";
+import type { StyleProfile } from "@/lib/types";
 
-/** What the stylist sees in the moodboard. */
-export function StyleRead() {
-  const { board, profile, reading, readError, status } = useApp();
-  const stale = profile && profile.boardKey !== boardKey(board);
-
-  if (!profile) {
-    return (
-      <section className="read" aria-live="polite">
-        <p className="eyebrow">What your stylist sees</p>
-        {reading ? (
-          <p className="thinking">
-            <span>Reading your board</span>
-          </p>
-        ) : readError ? (
-          <>
-            <p className="error">{readError}</p>
-            <button type="button" className="text-btn" onClick={readBoard}>
-              Try again
-            </button>
-          </>
-        ) : board.length < 3 ? (
-          <p className="muted">Pin at least three photos and your stylist will describe your style here.</p>
-        ) : status && !status.claude ? (
-          <p className="muted">Connect Claude (see Settings) and your stylist will describe your style here.</p>
-        ) : (
-          <button type="button" className="text-btn" onClick={readBoard}>
-            Read my board
-          </button>
-        )}
-      </section>
-    );
-  }
-
-  const p = profile.profile;
-  // Photo numbers refer to the board as it was when it was read.
-  const readIds = profile.boardKey.split(",");
-  const byId = new Map(board.map((b) => [b.id, b]));
-  const photo = (n: number) => byId.get(readIds[n - 1]);
-
+/** A style read: headline, summary, directions (with their photos) and the details. */
+export function ProfileBody({ profile: p, photo }: { profile: StyleProfile; photo: (n: number) => { id: string; src: string } | undefined }) {
   return (
-    <section className="read" aria-live="polite">
-      <p className="eyebrow">What your stylist sees</p>
+    <>
       <h2 className="read-headline">{p.headline}</h2>
       <p className="read-summary">{p.summary}</p>
 
@@ -61,7 +24,7 @@ export function StyleRead() {
                   .slice(0, 5)
                   .map((b) => (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img key={b.id} src={b.image} alt="" />
+                    <img key={b.id} src={b.src} alt="" />
                   ))}
               </div>
             </li>
@@ -101,6 +64,55 @@ export function StyleRead() {
           </>
         )}
       </dl>
+    </>
+  );
+}
+
+/** What the stylist sees in the moodboard. */
+export function StyleRead() {
+  const { board, profile, reading, readError, status } = useApp();
+  const stale = profile && profile.boardKey !== boardKey(board);
+
+  if (!profile) {
+    return (
+      <section className="read" aria-live="polite">
+        <p className="eyebrow">What your stylist sees</p>
+        {reading ? (
+          <p className="thinking">
+            <span>Reading your board</span>
+          </p>
+        ) : readError ? (
+          <>
+            <p className="error">{readError}</p>
+            <button type="button" className="text-btn" onClick={readBoard}>
+              Try again
+            </button>
+          </>
+        ) : board.length < 3 ? (
+          <p className="muted">Pin at least three photos and your stylist will describe your style here.</p>
+        ) : status && !status.claude ? (
+          <p className="muted">Connect Claude (see Settings) and your stylist will describe your style here.</p>
+        ) : (
+          <button type="button" className="text-btn" onClick={readBoard}>
+            Read my board
+          </button>
+        )}
+      </section>
+    );
+  }
+
+  // Photo numbers refer to the board as it was when it was read.
+  const readIds = profile.boardKey.split(",");
+  const byId = new Map(board.map((b) => [b.id, b]));
+  const photo = (n: number) => {
+    const b = byId.get(readIds[n - 1]);
+    return b && { id: b.id, src: b.image };
+  };
+
+  return (
+    <section className="read" aria-live="polite">
+      <p className="eyebrow">What your stylist sees</p>
+      <ProfileBody profile={profile.profile} photo={photo} />
 
       <p className="read-foot">
         {reading ? (

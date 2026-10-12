@@ -2,12 +2,15 @@
 // candidates (with photos) for Claude to look at.
 
 import type { Department, Kind, Listing, Prefs } from "../types";
+import { depopConfigured, depopSearch } from "./depop";
 import { ebayConfigured, ebayImageSearch, ebaySearch } from "./ebay";
 import { fetchPhoto, type Photo } from "./fetching";
 import { SHOPS, searchShop } from "./shops";
 import { avoidTerms, mentionsAny, priceOk, sizeOk } from "./sizes";
 
 export const MAX_CANDIDATES = 30;
+// Depop runs cost per listing, so only the first two searches go there.
+const DEPOP_SEARCHES = 2;
 
 export type SearchInput = {
   searches: { query: string; shop_query: string; kind: Kind }[];
@@ -39,12 +42,14 @@ type Lane = { label: string; items: Listing[] };
 export type Deps = {
   ebaySearch: typeof ebaySearch;
   ebayImageSearch: typeof ebayImageSearch;
+  depopSearch: typeof depopSearch;
   searchShop: typeof searchShop;
   fetchPhoto: typeof fetchPhoto;
   ebayConfigured: () => boolean;
+  depopConfigured: () => boolean;
 };
 
-const realDeps: Deps = { ebaySearch, ebayImageSearch, searchShop, fetchPhoto, ebayConfigured };
+const realDeps: Deps = { ebaySearch, ebayImageSearch, depopSearch, searchShop, fetchPhoto, ebayConfigured, depopConfigured };
 
 /** Run tasks with at most `limit` in flight. */
 async function pool<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
@@ -104,8 +109,10 @@ export async function runSearch(input: SearchInput, ctx: SearchContext, deps: De
   const max = input.max_price ?? ctx.prefs.maxPrice;
   const department: Department = ctx.prefs.department;
   const ebayOn = deps.ebayConfigured();
+  const depopOn = deps.depopConfigured();
   const problems: string[] = [];
   let ebayFailed = false;
+  let depopFailed = false;
   let shopFailures = 0;
 
   const ebayOpts = (kind: Kind) => ({ kind, department, minUsd: min, maxUsd: max, signal: ctx.signal });
@@ -119,7 +126,16 @@ export async function runSearch(input: SearchInput, ctx: SearchContext, deps: De
     }
   };
 
-  // Every search goes to eBay and to every shop at once.
+  // Every search goes to eBay, Depop and every shop at once.
+  const depopLanes = searches.slice(0, depopOn ? DEPOP_SEARCHES : 0).map((s) => async (): Promise<Lane> => {
+    try {
+      return { label: `Depop: ${s.query}`, items: await deps.depopSearch(s.query, { department, signal: ctx.signal }) };
+    } catch (e) {
+      if (!depopFailed) problems.push((e as Error).message);
+      depopFailed = true;
+      return { label: `Depop: ${s.query}`, items: [] };
+    }
+  });
   const ebayLanes: (() => Promise<Lane>)[] = [];
   const shopTasks: (() => Promise<{ search: number; items: Listing[] }>)[] = [];
   searches.forEach((s, i) => {
@@ -149,8 +165,9 @@ export async function runSearch(input: SearchInput, ctx: SearchContext, deps: De
     }
   }
 
-  const [ebayResults, shopResults, photoResults] = await Promise.all([
+  const [ebayResults, depopResults, shopResults, photoResults] = await Promise.all([
     pool(ebayLanes, 4),
+    pool(depopLanes, DEPOP_SEARCHES),
     pool(shopTasks, 24),
     pool(photoLanes, 2),
   ]);
@@ -162,6 +179,8 @@ export async function runSearch(input: SearchInput, ctx: SearchContext, deps: De
   searches.forEach((s, i) => {
     const ebay = ebayResults[i]; // one eBay lane per search when eBay is connected
     if (ebay) lanes.push({ label: ebay.label, items: filter(ebay.items) });
+    const depop = depopResults[i]; // Depop for the first searches when it's connected
+    if (depop) lanes.push({ label: depop.label, items: filter(depop.items) });
     const perShop = shopResults.filter((r) => r.search === i).map((r) => filter(r.items));
     lanes.push({ label: `shops: ${s.shop_query}`, items: interleave(perShop) });
   });
@@ -181,6 +200,7 @@ export async function runSearch(input: SearchInput, ctx: SearchContext, deps: De
 
   const sources = [
     ebayOn ? (ebayFailed ? "eBay (failed this time)" : "eBay") : "eBay is not connected",
+    depopOn ? (depopFailed ? "Depop (failed this time)" : `Depop (first ${Math.min(DEPOP_SEARCHES, searches.length)} searches)`) : "Depop is not connected",
     `${SHOPS.length} independent shops`,
   ].join("; ");
   const summary =

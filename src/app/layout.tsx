@@ -9,7 +9,7 @@ const sans = Figtree({ subsets: ["latin"], variable: "--font-sans", display: "sw
 
 export const metadata: Metadata = {
   title: { default: "shopr · your personal AI stylist", template: "%s · shopr" },
-  description: "Pin what you love. Your AI stylist searches eBay and independent vintage shops for pieces that fit your taste.",
+  description: "Pin what you love. Your AI stylist searches Depop, eBay and independent vintage shops for pieces that fit your taste.",
   applicationName: "shopr",
   appleWebApp: { capable: true, title: "shopr", statusBarStyle: "default" },
   formatDetection: { telephone: false },

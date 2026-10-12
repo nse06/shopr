@@ -68,7 +68,34 @@ export type ChatEvent =
 export type Status = {
   claude: boolean;
   ebay: boolean;
+  depop: boolean;
+  sharing: boolean; // somewhere to keep public boards (a Vercel Blob store)
   shops: number;
   passwordRequired: boolean;
   authorized: boolean;
+};
+
+// Public boards: what anyone can see at /u/<handle>.
+export type PublicPhoto = { id: string; url: string; aspect: number; x: number; y: number; w: number; rot: number; z: number };
+
+export type PublicBoard = {
+  handle: string;
+  name: string;
+  bio: string;
+  link: string | null;
+  photos: PublicPhoto[];
+  profile: StyleProfile | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type BoardSummary = {
+  handle: string;
+  name: string;
+  bio: string;
+  headline: string;
+  cover: string[]; // a few photo URLs
+  count: number;
+  tags: string[]; // words people can search by
+  updatedAt: number;
 };

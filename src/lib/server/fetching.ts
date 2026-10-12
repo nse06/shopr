@@ -104,6 +104,27 @@ async function readCapped(r: Response, maxBytes: number): Promise<Uint8Array> {
 
 export type Photo = { data: string; mediaType: ImageType };
 
+const PHOTO_SIDE = 512;
+
+/**
+ * Shrink a photo to at most 512px on its long side, as JPEG. Claude bills a photo by
+ * its size, and some marketplaces (Depop) serve full-size photos. Null if it can't.
+ */
+export async function shrinkPhoto(bytes: Uint8Array): Promise<Uint8Array | null> {
+  try {
+    const sharp = (await import("sharp")).default;
+    const out = await sharp(bytes, { failOn: "none" })
+      .rotate()
+      .resize({ width: PHOTO_SIDE, height: PHOTO_SIDE, fit: "inside", withoutEnlargement: true })
+      .flatten({ background: "#ffffff" })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+    return new Uint8Array(out);
+  } catch {
+    return null;
+  }
+}
+
 /** A listing photo as base64 for Claude, or null if it can't be fetched or isn't a usable image. */
 export async function fetchPhoto(
   url: string,
@@ -111,9 +132,11 @@ export async function fetchPhoto(
   accept = "image/webp,image/jpeg,image/png,image/gif;q=0.8",
 ): Promise<Photo | null> {
   try {
-    const { bytes } = await fetchPublic(url, { maxBytes: 4_000_000, timeoutMs: 8000, accept, signal });
+    const { bytes } = await fetchPublic(url, { maxBytes: 8_000_000, timeoutMs: 8000, accept, signal });
+    const small = await shrinkPhoto(bytes);
+    if (small) return { data: Buffer.from(small).toString("base64"), mediaType: "image/jpeg" };
     const mediaType = sniffImage(bytes);
-    return mediaType ? { data: Buffer.from(bytes).toString("base64"), mediaType } : null;
+    return mediaType && bytes.byteLength <= 1_500_000 ? { data: Buffer.from(bytes).toString("base64"), mediaType } : null;
   } catch {
     return null;
   }

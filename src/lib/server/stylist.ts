@@ -5,6 +5,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { HistoryTurn, Listing, Prefs, StyleProfile } from "../types";
 import { claude, FALLBACKS, finalText, MODEL, StylistError } from "./claude";
+import { depopConfigured } from "./depop";
 import { ebayConfigured } from "./ebay";
 import type { Photo } from "./fetching";
 import { runSearch, type SearchContext, type SearchInput, type SearchOutcome } from "./search";
@@ -21,8 +22,8 @@ Their moodboard
 - The moodboard photos and notes at the start of the conversation are the truth about their taste. Look closely: silhouettes and proportions, fabrics and how they have worn, washes and colours, eras, makers, and how pieces are put together.
 
 Finding things
-- To recommend anything to buy, call search_listings. It searches eBay and independent vintage and archive shops at once and shows you each listing's photo with its title, price in USD and size when known.
-- Write 2 to 4 searches that come at the request from different angles: the obvious garment, a close cousin, a maker or detail that fits their board. For eBay, write the way a seller titles a listing: the garment plus the details that matter (fabric, wash, era, cut, maker), 2 to 6 words. For the shops, give 1 to 3 plain words a product title would contain.
+- To recommend anything to buy, call search_listings. It searches the connected marketplaces (eBay, Depop) and independent vintage and archive shops at once, and shows you each listing's photo with its title, price in USD and size when known.
+- Write 2 to 4 searches that come at the request from different angles, most promising first: the obvious garment, a close cousin, a maker or detail that fits their board. For the marketplaces, write the way a seller titles a listing: the garment plus the details that matter (fabric, wash, era, cut, maker), 2 to 6 words. For the shops, give 1 to 3 plain words a product title would contain.
 - When they share a photo and want something like it, set use_attached_photo. When they point at moodboard photos, put those photo numbers in board_photos. Photo searches only work on eBay.
 - If the results are weak, you may search once more with different words. Never search more than twice for one message.
 - If they want advice rather than things to buy (how something should fit, what goes with what), answer without searching.
@@ -40,7 +41,7 @@ Writing
 export const SEARCH_TOOL: Anthropic.Beta.BetaTool = {
   name: "search_listings",
   description:
-    "Search eBay and independent vintage and archive shops for listings to recommend. Returns up to 30 listings, each with an id, its photo, title, price in USD, and size when known. Call this before recommending anything to buy.",
+    "Search the marketplaces (eBay, Depop) and independent vintage and archive shops for listings to recommend. Returns up to 30 listings, each with an id, its photo, title, price in USD, and size when known. Call this before recommending anything to buy.",
   strict: true,
   input_schema: {
     type: "object",
@@ -54,7 +55,7 @@ export const SEARCH_TOOL: Anthropic.Beta.BetaTool = {
             query: {
               type: "string",
               description:
-                "eBay search written like a listing title: garment plus the details that matter, 2 to 6 words, e.g. 'vintage carhartt chore coat blanket lined'.",
+                "Marketplace search (eBay, Depop) written like a listing title: garment plus the details that matter, 2 to 6 words, e.g. 'vintage carhartt chore coat blanket lined'.",
             },
             shop_query: {
               type: "string",
@@ -113,16 +114,18 @@ export type ChatInput = {
 
 export type Reply = { message: string; picks: Listing[]; followUps: string[]; query: string | null };
 
+export type Sources = { ebay: boolean; depop: boolean };
+
 export type StylistDeps = {
   create: (params: CreateParams, options: { signal?: AbortSignal }) => Promise<Anthropic.Beta.BetaMessage>;
   search: (input: SearchInput, ctx: SearchContext) => Promise<SearchOutcome>;
-  ebayConfigured: () => boolean;
+  sources: () => Sources;
 };
 
 const realDeps: StylistDeps = {
   create: (params, options) => claude().beta.messages.create(params, options),
   search: (input, ctx) => runSearch(input, ctx),
-  ebayConfigured,
+  sources: () => ({ ebay: ebayConfigured(), depop: depopConfigured() }),
 };
 
 const money = (n: number) => `$${Math.round(n)}`;
@@ -160,9 +163,13 @@ export function profileNotes(p: StyleProfile): string {
   ].join("\n");
 }
 
-function sourcesLine(ebay: boolean): string {
+function sourcesLine({ ebay, depop }: Sources): string {
   const shops = SHOPS.map((s) => `${s.name} (${s.focus})`).join("; ");
-  return `${ebay ? "eBay is connected (keyword and photo search)." : "eBay is not connected, so only the shops can be searched and photo searches don't work."} Independent shops: ${shops}.`;
+  return [
+    ebay ? "eBay is connected (keyword and photo search)." : "eBay is not connected, so photo searches don't work.",
+    depop ? "Depop is connected (keyword search, for your first two searches)." : "Depop is not connected.",
+    `Independent shops: ${shops}.`,
+  ].join(" ");
 }
 
 function image(data: string, mediaType: Photo["mediaType"] = "image/jpeg"): ContentBlock {
@@ -170,7 +177,7 @@ function image(data: string, mediaType: Photo["mediaType"] = "image/jpeg"): Cont
 }
 
 /** The moodboard and notes that open every conversation (cached between turns). */
-export function boardMessage(input: ChatInput, ebay: boolean): MessageParam {
+export function boardMessage(input: ChatInput, sources: Sources): MessageParam {
   const content: ContentBlock[] = [];
   if (input.board.length) {
     content.push({ type: "text", text: `My moodboard (${input.board.length} photos, numbered in order):` });
@@ -184,7 +191,7 @@ export function boardMessage(input: ChatInput, ebay: boolean): MessageParam {
   const notes = [
     input.profile ? `Your earlier read of my style:\n${profileNotes(input.profile)}` : "",
     `About me:\n${aboutMe(input.prefs)}`,
-    `Where you can search: ${sourcesLine(ebay)}`,
+    `Where you can search: ${sourcesLine(sources)}`,
   ].filter(Boolean);
   content.push({ type: "text", text: notes.join("\n\n"), cache_control: { type: "ephemeral" } });
   return { role: "user", content };
@@ -220,12 +227,13 @@ function describe(l: Listing): string {
   return bits.join(" · ");
 }
 
-export function searchStatus(input: SearchInput, ebay: boolean, again: boolean): string {
+export function searchStatus(input: SearchInput, sources: Sources, again: boolean): string {
   const quoted = input.searches.slice(0, 4).map((s) => `“${s.query}”`);
   const list = quoted.length > 1 ? `${quoted.slice(0, -1).join(", ")} and ${quoted.at(-1)}` : (quoted[0] ?? "");
   const photos = (input.use_attached_photo ? 1 : 0) + Math.min(2, input.board_photos.length);
-  const where = ebay ? `eBay and ${SHOPS.length} shops` : `${SHOPS.length} shops`;
-  return `${again ? "Searching again" : "Searching"} ${where} for ${list}${photos && ebay ? ", plus a photo search" : ""}`;
+  const markets = [sources.ebay && "eBay", sources.depop && "Depop"].filter(Boolean);
+  const where = markets.length ? `${markets.join(", ")} and ${SHOPS.length} shops` : `${SHOPS.length} shops`;
+  return `${again ? "Searching again" : "Searching"} ${where} for ${list}${photos && sources.ebay ? ", plus a photo search" : ""}`;
 }
 
 /** Parse the tool input defensively (strict tools guarantee the shape, but be safe). */
@@ -253,8 +261,8 @@ export async function runStylist(
   signal?: AbortSignal,
   deps: StylistDeps = realDeps,
 ): Promise<Reply> {
-  const ebay = deps.ebayConfigured();
-  const messages: MessageParam[] = [boardMessage(input, ebay), ...historyMessages(input.history), currentMessage(input)];
+  const sources = deps.sources();
+  const messages: MessageParam[] = [boardMessage(input, sources), ...historyMessages(input.history), currentMessage(input)];
   const shown = new Map<string, Listing>(); // candidate id -> listing, for this turn
   const seen = new Set(input.seen);
   let searchesRun = 0;
@@ -295,7 +303,7 @@ export async function runStylist(
         }
         const search = toSearchInput(use.input);
         firstQuery ??= search.searches[0]?.query ?? null;
-        emit({ type: "status", text: searchStatus(search, ebay, searchesRun > 0) });
+        emit({ type: "status", text: searchStatus(search, sources, searchesRun > 0) });
         searchesRun++;
         const outcome = await deps.search(search, {
           prefs: input.prefs,

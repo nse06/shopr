@@ -2,7 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it } from "vitest";
 import type { Photo } from "@/lib/server/fetching";
 import { interleave, keep, roundRobin, runSearch, type Deps } from "@/lib/server/search";
-import { boardMessage, historyMessages, runStylist, toReply, toSearchInput, type ChatInput, type StylistDeps } from "@/lib/server/stylist";
+import { boardMessage, historyMessages, runStylist, searchStatus, toReply, toSearchInput, type ChatInput, type StylistDeps } from "@/lib/server/stylist";
 import { DEFAULT_PREFS, type Listing } from "@/lib/types";
 
 const listing = (id: string, extra: Partial<Listing> = {}): Listing => ({
@@ -62,8 +62,12 @@ describe("search", () => {
     const shopQueries: string[] = [];
     const deps: Deps = {
       ebayConfigured: () => true,
+      depopConfigured: () => false,
       ebaySearch: async (q) => [listing(`ebay-${q}-1`), listing("seen-before")],
       ebayImageSearch: async () => [listing("by-photo")],
+      depopSearch: async () => {
+        throw new Error("Depop isn't connected");
+      },
       searchShop: async (shop, q) => {
         shopQueries.push(q);
         return shop.domain.startsWith("denim") ? [listing(`shop-${q}`)] : [];
@@ -87,18 +91,65 @@ describe("search", () => {
     expect(new Set(shopQueries)).toEqual(new Set(["chore coat"])); // the duplicate search was dropped
     expect(outcome.candidates.map((c) => c.listing.id)).toEqual(["ebay-vintage chore coat-1", "shop-chore coat", "by-photo"]);
     expect(outcome.summary).toContain("3 listings passed");
+    expect(outcome.summary).toContain("Depop is not connected");
+  });
+
+  it("searches Depop for the first two searches only, and says once if it fails", async () => {
+    const depopQueries: string[] = [];
+    const base: Deps = {
+      ebayConfigured: () => false,
+      depopConfigured: () => true,
+      ebaySearch: async () => [],
+      ebayImageSearch: async () => [],
+      depopSearch: async (q) => {
+        depopQueries.push(q);
+        return [listing(`depop-${q}`, { source: "Depop" })];
+      },
+      searchShop: async (shop, q) => (shop.domain.startsWith("denim") ? [listing(`shop-${q}`)] : []),
+      fetchPhoto: async () => photo,
+    };
+    const input = {
+      searches: ["a", "b", "c"].map((q) => ({ query: q, shop_query: q, kind: "clothing" as const })),
+      use_attached_photo: false,
+      board_photos: [],
+      min_price: null,
+      max_price: null,
+    };
+    const ctx = { prefs: DEFAULT_PREFS, seen: new Set<string>(), photo: null, board: [] };
+    const outcome = await runSearch(input, ctx, base);
+    expect(depopQueries.sort()).toEqual(["a", "b"]);
+    // Each search's lanes take turns: Depop, then the shops.
+    expect(outcome.candidates.map((c) => c.listing.id)).toEqual(["depop-a", "shop-a", "depop-b", "shop-b", "shop-c"]);
+    expect(outcome.summary).toContain("Depop (first 2 searches)");
+
+    const failing = await runSearch(input, ctx, {
+      ...base,
+      depopSearch: async () => {
+        throw new Error("Your Apify account is out of credit, so Depop was skipped.");
+      },
+    });
+    expect(failing.problems).toEqual(["Your Apify account is out of credit, so Depop was skipped."]);
+    expect(failing.candidates.map((c) => c.listing.id)).toEqual(["shop-a", "shop-b", "shop-c"]);
+    expect(failing.summary).toContain("Depop (failed this time)");
   });
 });
 
 describe("stylist", () => {
   it("opens with the moodboard, numbered, and caches it", () => {
-    const m = boardMessage(input(), false);
+    const m = boardMessage(input(), { ebay: false, depop: true });
     const blocks = m.content as Anthropic.Beta.BetaContentBlockParam[];
     expect(blocks.filter((b) => b.type === "image")).toHaveLength(2);
     expect(blocks.some((b) => b.type === "text" && b.text === "Photo 2")).toBe(true);
     const last = blocks.at(-1) as Anthropic.Beta.BetaTextBlockParam;
     expect(last.cache_control).toEqual({ type: "ephemeral" });
     expect(last.text).toContain("eBay is not connected");
+    expect(last.text).toContain("Depop is connected");
+  });
+
+  it("says where it's searching", () => {
+    const search = toSearchInput({ searches: [{ query: "chore coat" }, { query: "work jacket" }], board_photos: [1] });
+    expect(searchStatus(search, { ebay: true, depop: true }, false)).toBe("Searching eBay, Depop and 20 shops for “chore coat” and “work jacket”, plus a photo search");
+    expect(searchStatus(search, { ebay: false, depop: true }, true)).toBe("Searching again Depop and 20 shops for “chore coat” and “work jacket”");
   });
 
   it("replays earlier turns as text, with the picks it showed", () => {
@@ -134,7 +185,7 @@ describe("stylist", () => {
     const requests: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming[] = [];
     const events: string[] = [];
     const deps: StylistDeps = {
-      ebayConfigured: () => false,
+      sources: () => ({ ebay: false, depop: false }),
       search: async () => ({ candidates: [{ listing: listing("a"), photo }, { listing: listing("b"), photo }], found: 2, problems: ["eBay failed"], summary: "Searched" }),
       create: async (params) => {
         requests.push(structuredClone(params));
@@ -175,7 +226,7 @@ describe("stylist", () => {
 
   it("explains a refusal in plain words", async () => {
     const deps: StylistDeps = {
-      ebayConfigured: () => false,
+      sources: () => ({ ebay: false, depop: false }),
       search: async () => ({ candidates: [], found: 0, problems: [], summary: "" }),
       create: async () => message([], "refusal"),
     };

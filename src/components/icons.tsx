@@ -84,6 +84,37 @@ export const Refresh = (p: Props) => (
   </Svg>
 );
 
+export const Check = (p: Props) => (
+  <Svg {...p}>
+    <path d="M5 12.5l4.5 4.5L19 7.5" strokeLinejoin="round" />
+  </Svg>
+);
+
+export const Plus = (p: Props) => (
+  <Svg {...p}>
+    <path d="M12 5v14M5 12h14" />
+  </Svg>
+);
+
+export const Search = (p: Props) => (
+  <Svg {...p}>
+    <circle cx="11" cy="11" r="6.5" />
+    <path d="M16 16l4 4" />
+  </Svg>
+);
+
+export const ChevronLeft = (p: Props) => (
+  <Svg {...p}>
+    <path d="M15 5l-7 7 7 7" strokeLinejoin="round" />
+  </Svg>
+);
+
+export const ChevronRight = (p: Props) => (
+  <Svg {...p}>
+    <path d="M9 5l7 7-7 7" strokeLinejoin="round" />
+  </Svg>
+);
+
 /** The four-point sparkle next to "Picked for you". */
 export function Sparkle({ size = 22, color = "currentColor" }: { size?: number; color?: string }) {
   return (

@@ -316,9 +316,42 @@ code {
 }
 
 .masthead nav .nav-icon {
+  position: relative;
   width: 44px;
   justify-content: center;
   padding: 0;
+}
+
+.masthead nav .nav-icon .count {
+  position: absolute;
+  top: 4px;
+  right: 0;
+  transform: scale(0.9);
+}
+
+@media (max-width: 420px) {
+  .masthead-inner {
+    gap: 6px;
+  }
+  .masthead nav a {
+    padding: 0 6px;
+  }
+  .masthead nav .nav-icon {
+    width: 38px;
+  }
+}
+
+@media (max-width: 350px) {
+  .wordmark {
+    font-size: 26px;
+  }
+  .masthead nav a {
+    padding: 0 5px;
+    font-size: 13.5px;
+  }
+  .masthead nav .nav-icon {
+    width: 33px;
+  }
 }
 
 .count {
@@ -356,6 +389,10 @@ code {
   justify-content: space-between;
   gap: 12px 28px;
   padding: 28px 0 22px;
+}
+
+.page-head .lede {
+  margin-top: 10px;
 }
 
 .toolbar {
@@ -856,38 +893,146 @@ code {
   justify-items: start;
 }
 
+/* The cork board: speckled cork, polaroids, push-pins and the odd strip of tape.
+   Positions come in board units (the board is 1000 wide): 0.1cqw is one unit. */
+
+.cork {
+  --cork: #d7b98f;
+  container-type: inline-size;
+  padding: 18px 16px;
+  border-radius: 18px;
+  background-color: var(--cork);
+  background-image:
+    radial-gradient(rgba(110, 70, 30, 0.22) 0.8px, transparent 1.3px),
+    radial-gradient(rgba(255, 246, 228, 0.35) 0.9px, transparent 1.4px),
+    radial-gradient(rgba(90, 55, 20, 0.14) 1.6px, transparent 2.2px),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.12), rgba(0, 0, 0, 0.06));
+  background-size: 7px 7px, 11px 11px, 23px 23px, 100% 100%;
+  background-position: 0 0, 3px 5px, 9px 2px, 0 0;
+  box-shadow:
+    inset 0 0 0 1px rgba(80, 50, 20, 0.12),
+    inset 0 2px 14px rgba(80, 50, 20, 0.22);
+}
+
+@media (max-width: 640px) {
+  .cork {
+    padding: 14px 10px;
+    border-radius: 14px;
+  }
+}
+
 .pinboard {
   position: relative;
   width: 100%;
+  height: max(320px, calc(var(--board-h) * 0.1cqw));
   touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
 
+.pinboard.is-readonly {
+  height: max(200px, calc(var(--board-h) * 0.1cqw));
+}
+
 .pin {
+  --tack: max(13px, 2cqw);
   position: absolute;
+  left: calc(var(--x) * 0.1cqw);
+  top: calc(var(--y) * 0.1cqw);
+  width: calc(var(--w) * 0.1cqw);
+  height: calc(var(--h) * 0.1cqw);
+  display: block;
+  margin: 0;
+  /* The polaroid's white border; never thinner than a few pixels on a small screen. */
+  padding: max(4px, 0.8cqw) max(4px, 0.8cqw) max(12px, 2.6cqw);
+  border: 0;
+  border-radius: 2px;
+  background: #fffdf8;
+  box-shadow:
+    0 1px 1px rgba(60, 35, 10, 0.18),
+    0 4px 10px rgba(60, 35, 10, 0.22);
+  transform: rotate(var(--rot));
   touch-action: pan-y;
   cursor: grab;
-  border-radius: 12px;
-  background: var(--wash);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: box-shadow 0.15s ease;
 }
 
 .pin img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: 12px;
+  background: #ece6da;
   pointer-events: none;
   -webkit-user-drag: none;
 }
 
 .pin.is-selected {
   outline: 2px solid var(--accent);
-  outline-offset: 4px;
+  outline-offset: 3px;
   touch-action: none;
   cursor: grabbing;
+}
+
+.pin.is-lifted {
+  transform: rotate(var(--rot)) scale(1.03);
+  box-shadow:
+    0 2px 2px rgba(60, 35, 10, 0.16),
+    0 16px 28px rgba(60, 35, 10, 0.3);
+}
+
+.is-readonly .pin {
+  cursor: zoom-in;
+}
+
+.is-readonly .pin:hover,
+.is-readonly .pin:focus-visible {
+  box-shadow:
+    0 2px 2px rgba(60, 35, 10, 0.16),
+    0 12px 22px rgba(60, 35, 10, 0.28);
+}
+
+/* A round push-pin with a highlight, poking through the top of the frame. */
+.pin-tack {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--tack) * -0.38);
+  width: var(--tack);
+  height: var(--tack);
+  margin-left: calc(var(--tack) / -2);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.85) 0 13%, transparent 15%),
+    radial-gradient(circle at 50% 50%, var(--tack-color) 0 55%, color-mix(in srgb, var(--tack-color), #000 30%) 100%);
+  box-shadow: 1.5px 2.5px 2.5px rgba(40, 20, 0, 0.35);
+  pointer-events: none;
+}
+
+.pin-tape {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--tack) * -0.55);
+  width: 42%;
+  min-width: 34px;
+  height: calc(var(--tack) * 1.15);
+  transform: translateX(-50%) rotate(var(--tape-tilt));
+  background: rgba(250, 236, 190, 0.78);
+  background-image: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.22) 0 4px, transparent 4px 9px);
+  box-shadow: 0 1px 2px rgba(60, 35, 10, 0.15);
+  pointer-events: none;
+}
+
+.pin-mark {
+  position: absolute;
+  right: 6px;
+  bottom: 4px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
 }
 
 .pin-remove {
@@ -902,6 +1047,7 @@ code {
   border-radius: 50%;
   background: var(--ink);
   color: #fff;
+  z-index: 1;
 }
 
 .pin-resize {
@@ -912,6 +1058,7 @@ code {
   height: 36px;
   cursor: nwse-resize;
   touch-action: none;
+  z-index: 1;
 }
 
 .pin-resize::after {
@@ -956,7 +1103,7 @@ code {
   max-width: 12em;
 }
 
-.is-dropping .pinboard,
+.is-dropping .cork,
 .is-dropping .board-empty {
   outline: 2px dashed var(--accent);
   outline-offset: 8px;
@@ -1211,4 +1358,345 @@ code {
 
 .gate .error {
   margin-top: 14px;
+}
+
+/* ---------- Sharing ---------- */
+
+.share {
+  display: grid;
+  gap: 14px;
+  max-width: 640px;
+  margin-bottom: 24px;
+  padding: 20px;
+  border-radius: 18px;
+  background: var(--wash);
+}
+
+.share-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.share-form {
+  display: grid;
+  gap: 16px;
+}
+
+.share-form input {
+  width: 100%;
+  height: 46px;
+  border: 0;
+  border-radius: 12px;
+  padding: 0 14px;
+  font-size: 16px;
+  background: var(--bg);
+  outline: none;
+}
+
+.share-form input:focus {
+  box-shadow: 0 0 0 2px var(--ink) inset;
+}
+
+.handle-input {
+  display: flex;
+  align-items: center;
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.handle-input > span {
+  padding-left: 14px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.handle-input input {
+  padding-left: 2px;
+}
+
+.share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+}
+
+.share-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.share-link a {
+  text-decoration-color: var(--accent);
+  text-underline-offset: 3px;
+}
+
+.fine {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.text-btn--danger {
+  color: var(--danger);
+  text-decoration-color: currentColor;
+}
+
+.eyebrow a {
+  color: inherit;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 3px;
+}
+
+/* ---------- Explore ---------- */
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 560px;
+  height: 50px;
+  margin-bottom: 28px;
+  padding: 0 16px;
+  border-radius: 14px;
+  background: var(--wash);
+  color: var(--ink-2);
+}
+
+.search:focus-within {
+  box-shadow: 0 0 0 2px var(--ink) inset;
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: none;
+  font-size: 16px;
+  color: var(--ink);
+  outline: none;
+}
+
+.board-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(46%, 250px), 1fr));
+  gap: 32px 18px;
+}
+
+.board-card {
+  display: grid;
+  gap: 3px;
+  align-content: start;
+  text-decoration: none;
+  color: inherit;
+}
+
+.board-card:hover .cover {
+  box-shadow:
+    inset 0 0 0 1px rgba(80, 50, 20, 0.12),
+    inset 0 2px 14px rgba(80, 50, 20, 0.22),
+    0 6px 18px rgba(60, 35, 10, 0.16);
+}
+
+.cover {
+  position: relative;
+  aspect-ratio: 1;
+  margin-bottom: 10px;
+  padding: 0;
+  overflow: hidden;
+  transition: box-shadow 0.15s ease;
+}
+
+.cover-photo {
+  --side: 44%;
+  position: absolute;
+  width: var(--side);
+  aspect-ratio: 4 / 5;
+  padding: 4% 4% 11%;
+  background: #fffdf8;
+  border-radius: 2px;
+  box-shadow:
+    0 1px 1px rgba(60, 35, 10, 0.18),
+    0 4px 10px rgba(60, 35, 10, 0.22);
+  transform: rotate(var(--rot));
+}
+
+.cover-photo:nth-child(1) {
+  left: 5%;
+  top: 4%;
+}
+
+.cover-photo:nth-child(2) {
+  right: 5%;
+  top: 7%;
+}
+
+.cover-photo:nth-child(3) {
+  left: 9%;
+  bottom: -9%;
+}
+
+.cover-photo:nth-child(4) {
+  right: 7%;
+  bottom: -12%;
+}
+
+.cover-photo:only-child {
+  --side: 62%;
+  left: 19%;
+  top: 9%;
+}
+
+.cover-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.board-card-name {
+  font-family: var(--display);
+  font-weight: 600;
+  font-variation-settings: "SOFT" 100, "WONK" 1;
+  font-size: 20px;
+  line-height: 1.15;
+}
+
+.board-card-meta {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.board-card-line {
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---------- Someone's shared board ---------- */
+
+.profile-meta {
+  margin-top: 8px;
+  font-weight: 600;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.profile-meta a {
+  color: var(--ink);
+  text-decoration-color: var(--accent);
+  text-underline-offset: 3px;
+}
+
+.lightbox {
+  width: min(100vw, 720px);
+  max-width: 100vw;
+  max-height: 100dvh;
+  margin: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  overflow: visible;
+}
+
+.lightbox::backdrop {
+  background: rgba(24, 16, 8, 0.82);
+}
+
+.lightbox-figure {
+  margin: 0;
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  padding: 56px 16px 20px;
+}
+
+.lightbox-figure img {
+  max-width: 100%;
+  max-height: calc(100dvh - 190px);
+  object-fit: contain;
+  padding: 10px 10px 30px;
+  background: #fffdf8;
+  border-radius: 2px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+}
+
+.lightbox figcaption {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.lightbox-count {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lightbox .btn {
+  background: #fff;
+  color: var(--ink);
+}
+
+.lightbox .btn:hover:not(:disabled) {
+  background: #fff;
+}
+
+.lightbox .btn:disabled {
+  opacity: 0.7;
+}
+
+.lightbox-btn {
+  position: fixed;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.lightbox-btn:hover {
+  background: rgba(255, 255, 255, 0.26);
+}
+
+.lightbox-close {
+  top: calc(12px + env(safe-area-inset-top));
+  right: 12px;
+}
+
+.lightbox-prev,
+.lightbox-next {
+  top: 50%;
+  margin-top: -22px;
+}
+
+.lightbox-prev {
+  left: 12px;
+}
+
+.lightbox-next {
+  right: 12px;
+}
+
+@media (max-width: 640px) {
+  .lightbox-prev,
+  .lightbox-next {
+    top: auto;
+    bottom: calc(18px + env(safe-area-inset-bottom));
+    margin: 0;
+  }
 }

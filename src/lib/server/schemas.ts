@@ -66,3 +66,34 @@ export function badRequest(error: z.ZodError): Response {
     { status: 400 },
   );
 }
+
+export const ClaimSchema = z.object({ handle: z.string().max(40) });
+
+const PublicPhotoSchema = z.object({
+  id: z.string().regex(/^[A-Za-z0-9_-]{6,64}$/),
+  url: z.string().max(500),
+  aspect: z.number().min(0.1).max(10),
+  x: z.number().min(-400).max(1400),
+  y: z.number().min(-200).max(200_000),
+  w: z.number().min(40).max(1000),
+  rot: z.number().min(-45).max(45),
+  z: z.number().int().min(0).max(1_000_000_000),
+});
+
+export const BoardUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(60),
+  bio: z.string().trim().max(200).default(""),
+  link: z
+    .string()
+    .trim()
+    .max(200)
+    .url()
+    .refine((u) => u.startsWith("https://") || u.startsWith("http://"), "Links must start with https://")
+    .nullable()
+    .default(null),
+  photos: z
+    .array(PublicPhotoSchema)
+    .max(60)
+    .refine((photos) => new Set(photos.map((p) => p.id)).size === photos.length, "Each photo can only be on the board once"),
+  profile: ProfileSchema.nullable().default(null),
+});

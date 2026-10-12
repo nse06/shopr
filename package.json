@@ -12,10 +12,12 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.133.0",
+    "@vercel/blob": "2.8.1",
     "idb-keyval": "6.3.0",
     "next": "16.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "sharp": "0.35.5",
     "zod": "4.6.6"
   },
   "devDependencies": {

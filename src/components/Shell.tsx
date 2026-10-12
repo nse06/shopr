@@ -5,13 +5,16 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { refreshStatus } from "@/lib/client/api";
 import { flush, loadStore, savePassword, useApp } from "@/lib/client/store";
-import { Sliders } from "./icons";
+import { Heart, Sliders } from "./icons";
 
 const NAV = [
-  { href: "/", label: "For you" },
-  { href: "/board", label: "Board" },
-  { href: "/saved", label: "Saved" },
+  { href: "/", label: "For you", also: ["/more"] },
+  { href: "/board", label: "Board", also: [] },
+  { href: "/explore", label: "Explore", also: ["/u/"] },
 ];
+
+/** Pages anyone can see, even when this shopr is locked: other people's shared boards. */
+const isPublicPage = (path: string) => path === "/explore" || path.startsWith("/u/");
 
 function Masthead() {
   const path = usePathname();
@@ -25,11 +28,19 @@ function Masthead() {
         <span className="tagline">your personal AI stylist</span>
         <nav aria-label="Main">
           {NAV.map((n) => (
-            <Link key={n.href} href={n.href} aria-current={path === n.href || (n.href === "/" && path === "/more") ? "page" : undefined}>
+            <Link key={n.href} href={n.href} aria-current={path === n.href || n.also.some((a) => path.startsWith(a)) ? "page" : undefined}>
               {n.label}
-              {n.href === "/saved" && saved.length > 0 && <span className="count">{saved.length}</span>}
             </Link>
           ))}
+          <Link
+            href="/saved"
+            aria-current={path === "/saved" ? "page" : undefined}
+            aria-label={saved.length ? `Saved (${saved.length})` : "Saved"}
+            className="nav-icon"
+          >
+            <Heart size={21} filled={path === "/saved"} />
+            {saved.length > 0 && <span className="count">{saved.length}</span>}
+          </Link>
           <Link href="/settings" aria-current={path === "/settings" ? "page" : undefined} aria-label="Settings" className="nav-icon">
             <Sliders size={20} />
           </Link>
@@ -84,6 +95,7 @@ function PasswordGate() {
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const { locked } = useApp();
+  const path = usePathname();
 
   useEffect(() => {
     loadStore();
@@ -101,7 +113,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <>
       <Masthead />
-      {locked ? <PasswordGate /> : children}
+      {locked && !isPublicPage(path) ? <PasswordGate /> : children}
     </>
   );
 }

@@ -17,7 +17,7 @@ export async function call(path: string, init: RequestInit = {}): Promise<Respon
   return res;
 }
 
-async function failure(res: Response): Promise<string> {
+export async function failure(res: Response): Promise<string> {
   try {
     const body = (await res.json()) as { message?: string };
     if (body.message) return body.message;
