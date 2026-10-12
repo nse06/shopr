@@ -38,7 +38,14 @@ export const DEFAULT_PREFS: Prefs = {
   avoid: "",
 };
 
+/** A drop's picks: nine for For you, and spares that move up when one gets "Not for me". */
+export const DROP_SIZE = 12;
+export const SHOWN = 9;
+
 export type StyleDirection = { name: string; description: string; photos: number[] };
+
+/** A search worth running for this taste: for eBay and Depop, and plainer words for the shops. */
+export type ProfileSearch = { query: string; shop_query: string; kind: Kind };
 
 export type StyleProfile = {
   headline: string;
@@ -49,6 +56,7 @@ export type StyleProfile = {
   fit: string;
   look_for: string[];
   avoid: string[];
+  searches?: ProfileSearch[]; // daily drops rotate through these (reads made before they existed have none)
 };
 
 // One earlier turn of the conversation, as the browser sends it back.
@@ -102,7 +110,7 @@ export type BoardSummary = {
 };
 
 // What running shopr costs (estimates from list prices), shown in Settings.
-export type CostKind = "picks" | "chat" | "more" | "read";
+export type CostKind = "picks" | "chat" | "more" | "read" | "drop" | "test";
 
 export type CostEntry = { at: number; kind: CostKind; usd: number; claudeUsd: number; depopUsd: number; ok: boolean };
 

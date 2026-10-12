@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { retryLast, sendMessage } from "@/lib/client/api";
+import { getDrop, localDay, retryLast, sendMessage } from "@/lib/client/api";
 import { processChatPhoto } from "@/lib/client/images";
 import { useApp } from "@/lib/client/store";
+import { SHOWN } from "@/lib/types";
 import { ago, PassToast, requestLabel, Thinking, usePass } from "./Bits";
 import { ArrowRight, ArrowUp, Camera, Close, Refresh, Sparkle } from "./icons";
 import { Disclosure, ListingTile } from "./Listing";
@@ -12,7 +13,7 @@ import { Disclosure, ListingTile } from "./Listing";
 const STARTERS = ["Only jackets", "Under $100", "Something for a wedding"];
 const SHOWN_TURNS = 6;
 
-// Picking from the board starts by itself once per visit, never in a loop.
+// Today's drop arrives by itself the first time the app opens each day, never in a loop.
 let autoPicked = false;
 
 export function Home() {
@@ -31,12 +32,13 @@ export function Home() {
   const updating = pending != null && pending.intent !== "more";
   const enoughBoard = board.length >= 3;
 
-  // The first time there's a board but no picks yet, pick from it.
+  // Once a day: a fresh drop, unless the picks on screen are already from today.
+  const fresh = feed != null && localDay(feed.at) === localDay();
   useEffect(() => {
-    if (autoPicked || !loaded || feed || pending || !status?.claude || !enoughBoard) return;
+    if (autoPicked || !loaded || fresh || pending || !status?.claude || !enoughBoard) return;
     autoPicked = true;
-    sendMessage({ intent: "feed" });
-  }, [loaded, feed, pending, status?.claude, enoughBoard]);
+    getDrop();
+  }, [loaded, fresh, pending, status?.claude, enoughBoard]);
 
   // When new picks arrive, bring them into view.
   const feedAt = feed?.at;
@@ -69,7 +71,7 @@ export function Home() {
     }
   }
 
-  const picks = feed?.picks.slice(0, 9) ?? [];
+  const picks = feed?.picks.slice(0, SHOWN) ?? [];
   const subtitle = feed ? `${requestLabel(feed.request)} · ${ago(feed.at)}` : null;
   const turns = showAll ? chat : chat.slice(-SHOWN_TURNS);
   const last = chat.at(-1);
@@ -86,9 +88,9 @@ export function Home() {
             <button
               type="button"
               className="icon-btn"
-              aria-label="New picks from your board"
-              title="New picks from your board"
-              onClick={() => sendMessage({ intent: "feed" })}
+              aria-label="Another drop from your board"
+              title="Another drop from your board"
+              onClick={() => getDrop()}
               disabled={!!pending || !ready}
             >
               <Refresh />
@@ -96,6 +98,7 @@ export function Home() {
           )}
         </div>
         {subtitle && <p className="sub">{subtitle}</p>}
+        {feed?.note && !feed.request && <p className="drop-note">{feed.note}</p>}
         {feed && feedError && !pending && <p className="error">{feedError}</p>}
       </section>
 
@@ -124,21 +127,21 @@ export function Home() {
         </>
       ) : !loaded ? null : updating ? (
         <div className="grid9" aria-hidden="true">
-          {Array.from({ length: 9 }, (_, i) => (
+          {Array.from({ length: SHOWN }, (_, i) => (
             <div key={i} className="tile tile--ghost" />
           ))}
         </div>
       ) : feedError ? (
         <div className="empty">
           <p className="error">{feedError}</p>
-          <button type="button" className="btn" onClick={() => sendMessage({ intent: "feed" })} disabled={!ready}>
+          <button type="button" className="btn" onClick={() => getDrop()} disabled={!ready}>
             Try again
           </button>
         </div>
       ) : enoughBoard ? (
         <div className="empty">
-          <p>Your board is ready. I’ll pick nine pieces from it.</p>
-          <button type="button" className="btn" onClick={() => sendMessage({ intent: "feed" })} disabled={!ready}>
+          <p>Your board is ready. I’ll pick nine pieces from it every day.</p>
+          <button type="button" className="btn" onClick={() => getDrop()} disabled={!ready}>
             Pick for me
           </button>
         </div>

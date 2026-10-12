@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { sendMessage } from "@/lib/client/api";
+import { getDrop, sendMessage } from "@/lib/client/api";
 import { useApp } from "@/lib/client/store";
 import { Elsewhere, PassToast, requestLabel, Thinking, usePass } from "./Bits";
 import { Disclosure, ListingCard } from "./Listing";
@@ -60,7 +60,7 @@ export function MorePicks() {
           {finding && pending ? (
             <Thinking key={pending.startedAt} {...pending} />
           ) : (
-            <button type="button" className="btn" onClick={() => sendMessage({ intent: "more" })} disabled={!!pending || !ready}>
+            <button type="button" className="btn" onClick={() => getDrop({ more: true })} disabled={!!pending || !ready}>
               Find more
             </button>
           )}

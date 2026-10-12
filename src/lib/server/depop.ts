@@ -5,8 +5,10 @@
 // takes the same input. Each search is one short actor run, billed by Apify per
 // listing returned (about half a cent each), so each search asks for ten.
 
+import { createHash } from "node:crypto";
 import type { Department, Listing } from "../types";
 import { guessSizes, toUsd } from "./sizes";
+import { storageConfigured, store, type Store } from "./storage";
 
 const ACTOR = () => process.env.APIFY_DEPOP_ACTOR || "khadinakbar~depop-scraper";
 const API = () => process.env.APIFY_API_BASE || "https://api.apify.com";
@@ -122,4 +124,35 @@ export async function depopSearch(
   const items = Array.isArray(body) ? (body as DepopItem[]) : [];
   opts.onScraped?.(items.length);
   return parseDepop(items, opts.department);
+}
+
+type DepopSearch = typeof depopSearch;
+const DAY = 86_400_000;
+const dayNumber = () => Math.floor(Date.now() / DAY);
+
+// One actor run per search per day, shared by everyone who asks.
+
+let cleanedOn = -1;
+
+/** Depop searches remembered for the rest of the day, so the same search isn't paid for twice. */
+export function cachedDepop(search: DepopSearch = depopSearch, storeFor: () => Store | null = () => (storageConfigured() ? store() : null)): DepopSearch {
+  return async (query, opts) => {
+    const s = storeFor();
+    if (!s) return search(query, opts);
+    const day = new Date().toISOString().slice(0, 10);
+    const key = createHash("sha1").update(`${query.trim().toLowerCase()}|${opts.department}|${process.env.APIFY_DEPOP_COUNTRY || "us"}`).digest("hex").slice(0, 20);
+    const path = `depop-cache/${day}/${key}.json`;
+    const hit = await s.readJson<Listing[]>(path).catch(() => null);
+    if (hit) return hit.data;
+    const listings = await search(query, opts);
+    await s.writeJson(path, listings).catch(() => {});
+    if (cleanedOn !== dayNumber()) {
+      cleanedOn = dayNumber();
+      const yesterday = new Date(Date.now() - DAY).toISOString().slice(0, 10);
+      s.list("depop-cache/")
+        .then((files) => s.remove(files.filter((f) => f.pathname.slice("depop-cache/".length, "depop-cache/".length + 10) < yesterday).map((f) => f.url)))
+        .catch(() => {});
+    }
+    return listings;
+  };
 }

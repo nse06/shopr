@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { call, refreshStatus } from "@/lib/client/api";
 import { savePassword, setPrefs, setState, useApp } from "@/lib/client/store";
@@ -57,6 +58,8 @@ const KIND_LABELS: Record<CostKind, string> = {
   chat: "A message to your stylist",
   more: "Finding more",
   read: "Reading your board",
+  drop: "Today's drop",
+  test: "Drop test",
 };
 
 /** JSON from one of shopr's own routes: null while loading, "error" if it failed. */
@@ -349,6 +352,9 @@ export function Settings() {
           <h2 className="section-title">What it costs</h2>
           <p className="muted">
             Estimated from Anthropic&apos;s and Apify&apos;s list prices for what your stylist used. Your Anthropic and Apify bills are the final word.
+          </p>
+          <p className="muted">
+            Daily drops can run on a cheaper model. <Link href="/droptest">Run the drop test</Link> to see how each one picks.
           </p>
         </div>
         <Costs />

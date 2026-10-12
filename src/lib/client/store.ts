@@ -42,7 +42,11 @@ export type Feed = {
   request: string | null; // what was asked for; null = picked from the board
   query: string | null; // the stylist's first search, for links to other sites
   at: number;
+  note?: string; // a drop's one line on what it leans into
 };
+
+/** Today's drops: how many there have been and what they showed, so each brings new pieces. */
+export type Drops = { day: string; round: number; shown: string[] };
 
 export type Intent = "chat" | "feed" | "more";
 
@@ -72,6 +76,7 @@ export type State = {
   profile: ProfileRecord | null;
   publish: Publish | null;
   passed: PassedItem[]; // newest first
+  drops: Drops | null;
   // Not stored:
   status: Status | null;
   locked: boolean; // the server wants a password
@@ -84,7 +89,7 @@ export type State = {
   publishError: string | null;
 };
 
-const STORED = ["board", "feed", "chat", "saved", "prefs", "profile", "publish", "passed"] as const;
+const STORED = ["board", "feed", "chat", "saved", "prefs", "profile", "publish", "passed", "drops"] as const;
 type StoredKey = (typeof STORED)[number];
 
 const INITIAL: State = {
@@ -97,6 +102,7 @@ const INITIAL: State = {
   profile: null,
   publish: null,
   passed: [],
+  drops: null,
   status: null,
   locked: false,
   pending: null,

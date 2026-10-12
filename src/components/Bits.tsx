@@ -99,7 +99,7 @@ export function ago(at: number, now = Date.now()): string {
 
 /** What the current picks are for, in a few words. */
 export function requestLabel(request: string | null): string {
-  if (!request) return "From your board";
+  if (!request) return "Today's drop";
   const short = (t: string) => (t.length > 44 ? `${t.slice(0, 42).trimEnd()}…` : t);
   const like = request.match(/^More like this: (.+)$/);
   return like ? `More like “${short(like[1])}”` : `For “${short(request)}”`;

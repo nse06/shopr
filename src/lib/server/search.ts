@@ -3,7 +3,7 @@
 
 import type { Department, Kind, Listing, Prefs } from "../types";
 import type { Meter } from "./costs";
-import { depopConfigured, depopSearch } from "./depop";
+import { cachedDepop, depopConfigured, depopSearch } from "./depop";
 import { ebayConfigured, ebayImageSearch, ebaySearch } from "./ebay";
 import { fetchPhoto, type Photo } from "./fetching";
 import { SHOPS, searchShop } from "./shops";
@@ -28,6 +28,9 @@ export type SearchContext = {
   board: string[]; // base64 JPEGs of the moodboard, numbered from 1
   signal?: AbortSignal;
   meter?: Meter; // adds up what the request spends
+  depopSearches?: number; // how many of the searches also go to Depop (default 2)
+  maxCandidates?: number; // listings with photos to hand back (default 30)
+  photoSide?: number; // the long side of those photos, in pixels (default 512)
 };
 
 export type Candidate = { listing: Listing; photo: Photo };
@@ -51,7 +54,8 @@ export type Deps = {
   depopConfigured: () => boolean;
 };
 
-const realDeps: Deps = { ebaySearch, ebayImageSearch, depopSearch, searchShop, fetchPhoto, ebayConfigured, depopConfigured };
+// Depop searches are remembered for the day, so the same search is only paid for once.
+const realDeps: Deps = { ebaySearch, ebayImageSearch, depopSearch: cachedDepop(depopSearch), searchShop, fetchPhoto, ebayConfigured, depopConfigured };
 
 /** Run tasks with at most `limit` in flight. */
 async function pool<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
@@ -102,6 +106,8 @@ export function keep(listing: Listing, prefs: Prefs, min: number | null, max: nu
 }
 
 export async function runSearch(input: SearchInput, ctx: SearchContext, deps: Deps = realDeps): Promise<SearchOutcome> {
+  const depopCount = ctx.depopSearches ?? DEPOP_SEARCHES;
+  const maxCandidates = ctx.maxCandidates ?? MAX_CANDIDATES;
   const searches = input.searches
     .map((s) => ({ ...s, query: s.query.trim().slice(0, 120), shop_query: (s.shop_query || s.query).trim().slice(0, 60) }))
     .filter((s) => s.query)
@@ -129,7 +135,7 @@ export async function runSearch(input: SearchInput, ctx: SearchContext, deps: De
   };
 
   // Every search goes to eBay, Depop and every shop at once.
-  const depopLanes = searches.slice(0, depopOn ? DEPOP_SEARCHES : 0).map((s) => async (): Promise<Lane> => {
+  const depopLanes = searches.slice(0, depopOn ? depopCount : 0).map((s) => async (): Promise<Lane> => {
     let counted = false;
     const onScraped = (listings: number) => {
       counted = true;
@@ -175,7 +181,7 @@ export async function runSearch(input: SearchInput, ctx: SearchContext, deps: De
 
   const [ebayResults, depopResults, shopResults, photoResults] = await Promise.all([
     pool(ebayLanes, 4),
-    pool(depopLanes, DEPOP_SEARCHES),
+    pool(depopLanes, Math.max(1, depopCount)),
     pool(shopTasks, 24),
     pool(photoLanes, 2),
   ]);
@@ -196,19 +202,19 @@ export async function runSearch(input: SearchInput, ctx: SearchContext, deps: De
 
   const found = new Set(lanes.flatMap((l) => l.items.map((i) => i.id))).size;
   // Pick a few extra in case some photos don't load.
-  const chosen = roundRobin(lanes, MAX_CANDIDATES + 8);
-  const photos = await pool(chosen.map((l) => () => deps.fetchPhoto(l.thumb, ctx.signal)), 12);
+  const chosen = roundRobin(lanes, maxCandidates + 8);
+  const photos = await pool(chosen.map((l) => () => deps.fetchPhoto(l.thumb, ctx.signal, undefined, ctx.photoSide)), 12);
   const candidates: Candidate[] = [];
   chosen.forEach((listing, i) => {
     const photo = photos[i];
-    if (photo && candidates.length < MAX_CANDIDATES) candidates.push({ listing, photo });
+    if (photo && candidates.length < maxCandidates) candidates.push({ listing, photo });
   });
 
   if (shopFailures > SHOPS.length * searches.length * 0.5) problems.push("Many of the independent shops didn't answer this time.");
 
   const sources = [
     ebayOn ? (ebayFailed ? "eBay (failed this time)" : "eBay") : "eBay is not connected",
-    depopOn ? (depopFailed ? "Depop (failed this time)" : `Depop (first ${Math.min(DEPOP_SEARCHES, searches.length)} searches)`) : "Depop is not connected",
+    depopOn ? (depopFailed ? "Depop (failed this time)" : `Depop (first ${Math.min(depopCount, searches.length) === 1 ? "search" : `${Math.min(depopCount, searches.length)} searches`})`) : "Depop is not connected",
     `${SHOPS.length} independent shops`,
   ].join("; ");
   const summary =

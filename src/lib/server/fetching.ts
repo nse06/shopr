@@ -104,18 +104,19 @@ async function readCapped(r: Response, maxBytes: number): Promise<Uint8Array> {
 
 export type Photo = { data: string; mediaType: ImageType };
 
-const PHOTO_SIDE = 512;
+export const PHOTO_SIDE = 512;
 
 /**
- * Shrink a photo to at most 512px on its long side, as JPEG. Claude bills a photo by
- * its size, and some marketplaces (Depop) serve full-size photos. Null if it can't.
+ * Shrink a photo to at most `side` px on its long side, as JPEG. Claude bills a photo
+ * by its area (one token per 28x28 pixels), and some marketplaces (Depop) serve
+ * full-size photos. Null if it can't.
  */
-export async function shrinkPhoto(bytes: Uint8Array): Promise<Uint8Array | null> {
+export async function shrinkPhoto(bytes: Uint8Array, side = PHOTO_SIDE): Promise<Uint8Array | null> {
   try {
     const sharp = (await import("sharp")).default;
     const out = await sharp(bytes, { failOn: "none" })
       .rotate()
-      .resize({ width: PHOTO_SIDE, height: PHOTO_SIDE, fit: "inside", withoutEnlargement: true })
+      .resize({ width: side, height: side, fit: "inside", withoutEnlargement: true })
       .flatten({ background: "#ffffff" })
       .jpeg({ quality: 80 })
       .toBuffer();
@@ -130,16 +131,23 @@ export async function fetchPhoto(
   url: string,
   signal?: AbortSignal,
   accept = "image/webp,image/jpeg,image/png,image/gif;q=0.8",
+  side = PHOTO_SIDE,
 ): Promise<Photo | null> {
   try {
     const { bytes } = await fetchPublic(url, { maxBytes: 8_000_000, timeoutMs: 8000, accept, signal });
-    const small = await shrinkPhoto(bytes);
+    const small = await shrinkPhoto(bytes, side);
     if (small) return { data: Buffer.from(small).toString("base64"), mediaType: "image/jpeg" };
     const mediaType = sniffImage(bytes);
     return mediaType && bytes.byteLength <= 1_500_000 ? { data: Buffer.from(bytes).toString("base64"), mediaType } : null;
   } catch {
     return null;
   }
+}
+
+/** A base64 photo made smaller (it's returned as it was if it's already small enough or can't be read). */
+export async function resizePhoto(photo: Photo, side: number): Promise<Photo> {
+  const small = await shrinkPhoto(Buffer.from(photo.data, "base64"), side);
+  return small ? { data: Buffer.from(small).toString("base64"), mediaType: "image/jpeg" } : photo;
 }
 
 /** The preview photo a page shares (og:image and friends), as an absolute URL. */

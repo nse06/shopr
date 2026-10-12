@@ -1,7 +1,7 @@
 // Reading the moodboard: Claude looks at every photo and writes up the person's style.
 
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Prefs, StyleProfile } from "../types";
+import type { Prefs, ProfileSearch, StyleProfile } from "../types";
 import { claude, FALLBACKS, finalText, MODEL, StylistError } from "./claude";
 import type { Meter } from "./costs";
 import { aboutMe } from "./stylist";
@@ -17,7 +17,8 @@ Study the person's moodboard and describe their taste the way a sharp stylist wo
 - palette: 3 to 6 colour words.
 - fit: one sentence on fit and proportion.
 - look_for: 4 to 8 makers, details, fabrics or eras worth searching for.
-- avoid: 2 to 5 things that would clash with this taste.`;
+- avoid: 2 to 5 things that would clash with this taste.
+- searches: 8 to 12 searches for finding pieces like these secondhand, covering every direction. Write each query the way sellers title listings on eBay and Depop: the garment plus the detail that matters (maker, fabric, wash, era, cut), 2 to 6 words, e.g. "carhartt duck canvas chore coat". shop_query is 1 to 3 plain words a shop's product title would contain, e.g. "chore coat". kind is clothing, shoes or accessories.`;
 
 const strings = { type: "array", items: { type: "string" } };
 
@@ -46,8 +47,21 @@ export const PROFILE_FORMAT = {
       fit: { type: "string" },
       look_for: strings,
       avoid: strings,
+      searches: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            query: { type: "string" },
+            shop_query: { type: "string" },
+            kind: { type: "string", enum: ["clothing", "shoes", "accessories"] },
+          },
+          required: ["query", "shop_query", "kind"],
+          additionalProperties: false,
+        },
+      },
     },
-    required: ["headline", "summary", "directions", "key_pieces", "palette", "fit", "look_for", "avoid"],
+    required: ["headline", "summary", "directions", "key_pieces", "palette", "fit", "look_for", "avoid", "searches"],
     additionalProperties: false,
   },
 };
@@ -56,6 +70,8 @@ type Create = (
   params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
   options: { signal?: AbortSignal },
 ) => Promise<Anthropic.Beta.BetaMessage>;
+
+export const KINDS = new Set(["clothing", "shoes", "accessories"]);
 
 export async function readBoard(
   board: string[],
@@ -107,5 +123,13 @@ function clean(p: StyleProfile, photos: number): StyleProfile {
     fit: String(p.fit ?? "").trim(),
     look_for: list(p.look_for),
     avoid: list(p.avoid),
+    searches: (Array.isArray(p.searches) ? p.searches : [])
+      .map((s) => ({
+        query: String(s?.query ?? "").trim().slice(0, 120),
+        shop_query: String(s?.shop_query || s?.query || "").trim().slice(0, 60),
+        kind: (KINDS.has(s?.kind) ? s.kind : "clothing") as ProfileSearch["kind"],
+      }))
+      .filter((s) => s.query)
+      .slice(0, 12),
   };
 }

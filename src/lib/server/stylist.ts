@@ -228,7 +228,7 @@ function currentMessage(input: ChatInput): MessageParam {
   return { role: "user", content };
 }
 
-function describe(l: Listing): string {
+export function describe(l: Listing): string {
   const bits = [l.source, l.title || "(no title)"];
   if (l.priceUsd != null) bits.push(l.currency && l.currency !== "USD" && l.price != null ? `$${l.priceUsd} (${l.price} ${l.currency})` : `$${l.priceUsd}`);
   else if (l.price != null) bits.push(`${l.price} ${l.currency ?? ""}`.trim());

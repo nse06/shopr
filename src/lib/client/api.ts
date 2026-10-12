@@ -1,7 +1,20 @@
 "use client";
 
-import type { ChatEvent, HistoryTurn, Listing, Status, StyleProfile } from "../types";
-import { boardForAI, boardKey, getPassword, getState, newId, setState, type Intent, type Shown, type StylistTurn, type Turn } from "./store";
+import { DROP_SIZE, type ChatEvent, type HistoryTurn, type Listing, type Status, type StyleProfile } from "../types";
+import {
+  boardForAI,
+  boardKey,
+  getPassword,
+  getState,
+  newId,
+  setState,
+  type BoardItem,
+  type Intent,
+  type ProfileRecord,
+  type Shown,
+  type StylistTurn,
+  type Turn,
+} from "./store";
 
 export class Locked extends Error {}
 
@@ -204,25 +217,117 @@ export function retryLast(): void {
   sendMessage({ text: asked.text, photo, photoUrl: photo ? null : asked.photo });
 }
 
-/** Ask Claude to read the moodboard. */
-export async function readBoard(): Promise<void> {
+let reading: Promise<void> | null = null;
+
+/** Ask Claude to read the moodboard. A read already under way is shared, not repeated. */
+export function readBoard(): Promise<void> {
+  reading ??= (async () => {
+    const s = getState();
+    if (boardForAI(s.board).length < 3) return;
+    const key = boardKey(s.board);
+    setState({ reading: true, readError: null });
+    try {
+      const res = await call("/api/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ board: boardPhotos(), prefs: s.prefs }),
+      });
+      if (!res.ok) return setState({ reading: false, readError: await failure(res) });
+      const { profile } = (await res.json()) as { profile: StyleProfile };
+      setState({ reading: false, profile: { profile, boardKey: key, at: Date.now() } });
+    } catch (e) {
+      setState({ reading: false, readError: e instanceof Locked ? null : "Couldn't reach shopr. Try again." });
+    }
+  })().finally(() => {
+    reading = null;
+  });
+  return reading;
+}
+
+/** "2026-10-12" in this device's time zone: drops are daily where the person is. */
+export const localDay = (at = Date.now()) => new Date(at).toLocaleDateString("en-CA");
+
+/** Up to 8 board photos for a drop: one for each direction the style read found, then more of them, then the newest. */
+export function dropBoardPhotos(board: BoardItem[], record: ProfileRecord | null, max = 8): string[] {
+  const byId = new Map(board.map((b) => [b.id, b]));
+  const chosen: BoardItem[] = [];
+  const add = (b: BoardItem | undefined) => {
+    if (b && !chosen.includes(b) && chosen.length < max) chosen.push(b);
+  };
+  if (record) {
+    const readIds = record.boardKey.split(",");
+    const directions = record.profile.directions.map((d) => d.photos.map((n) => byId.get(readIds[n - 1])));
+    for (let i = 0; chosen.length < max && directions.some((d) => i < d.length); i++) for (const d of directions) add(d[i]);
+  }
+  for (const b of [...board].sort((a, b) => b.addedAt - a.addedAt)) add(b);
+  return chosen.map((b) => b.ai);
+}
+
+type DropReply = { picks: Listing[]; note: string; query: string | null; problems: string[] };
+
+/**
+ * Today's drop: twelve pieces picked from the board with one Claude call, nine on For
+ * you and the rest as spares. With `more`, twelve more in the same spirit, added to the
+ * picks. Each drop in a day uses the style read's next searches and skips everything
+ * already shown.
+ */
+export async function getDrop({ more = false }: { more?: boolean } = {}): Promise<void> {
+  if (getState().pending) return;
+  const intent: Intent = more ? "more" : "feed";
+  const working = more ? "Finding more" : "Picking today's drop";
+  setState({ pending: { intent, status: working, notices: [], startedAt: Date.now() }, feedError: null, moreNote: null });
+  const fail = (text: string) => setState({ pending: null, feedError: { intent, text } });
+
+  // A drop works from the style read: read the board first if there's no read yet, or
+  // if the board has changed and the read is from an earlier day.
+  const before = getState();
+  const stale = before.profile && before.profile.boardKey !== boardKey(before.board);
+  if (!before.profile || (stale && localDay(before.profile.at) !== localDay())) {
+    setState((now) => ({ pending: now.pending && { ...now.pending, status: "Reading your board" } }));
+    await readBoard();
+    setState((now) => ({ pending: now.pending && { ...now.pending, status: working } }));
+  }
   const s = getState();
-  if (s.reading) return;
-  const items = boardForAI(s.board);
-  if (items.length < 3) return;
-  const key = boardKey(s.board);
-  setState({ reading: true, readError: null });
+  if (!s.profile) return fail(s.readError ?? "Pin at least three photos and your stylist will read your board, then pick from it.");
+
+  const day = localDay();
+  const drops = s.drops?.day === day ? s.drops : { day, round: -1, shown: [] };
+  const round = drops.round + 1;
+  const seen = [...new Set([...s.passed.map((p) => p.id).slice(0, 150), ...drops.shown.slice(-200), ...(s.feed?.picks ?? []).map((p) => p.id).slice(-48)])];
   try {
-    const res = await call("/api/profile", {
+    const res = await call("/api/drop", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ board: boardPhotos(), prefs: s.prefs }),
+      body: JSON.stringify({
+        profile: s.profile.profile,
+        board: dropBoardPhotos(s.board, s.profile),
+        prefs: s.prefs,
+        seen,
+        passed: s.passed.slice(0, 30).map(({ title, source }) => ({ title, source })),
+        size: DROP_SIZE,
+        round: Math.min(round, 50),
+        more,
+      }),
     });
-    if (!res.ok) return setState({ reading: false, readError: await failure(res) });
-    const { profile } = (await res.json()) as { profile: StyleProfile };
-    setState({ reading: false, profile: { profile, boardKey: key, at: Date.now() } });
+    if (!res.ok) return fail(await failure(res));
+    const result = (await res.json()) as DropReply;
+    setState((now) => {
+      const done = { pending: null, drops: { day, round, shown: [...drops.shown, ...result.picks.map((p) => p.id)].slice(-300) } };
+      if (more) {
+        const have = new Set((now.feed?.picks ?? []).map((p) => p.id));
+        const added = result.picks.filter((p) => !have.has(p.id));
+        return {
+          ...done,
+          moreNote: added.length ? null : "Nothing new turned up just now. Try again tomorrow, or ask your stylist for something.",
+          feed: now.feed ? { ...now.feed, picks: [...now.feed.picks, ...added] } : { picks: added, request: null, query: result.query, at: Date.now(), note: result.note },
+        };
+      }
+      if (!result.picks.length) return { ...done, feedError: { intent, text: result.note || "Nothing fit today. Try again later." } };
+      return { ...done, feed: { picks: result.picks, request: null, query: result.query, at: Date.now(), note: result.note } };
+    });
   } catch (e) {
-    setState({ reading: false, readError: e instanceof Locked ? null : "Couldn't reach shopr. Try again." });
+    if (e instanceof Locked) return setState({ pending: null });
+    fail("Couldn't reach shopr. Check your connection and try again.");
   }
 }
 

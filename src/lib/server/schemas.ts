@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DEFAULT_PREFS } from "../types";
+import { DEFAULT_PREFS, DROP_SIZE } from "../types";
 
 // Photos arrive as base64 JPEGs, already shrunk in the browser.
 const photo = z.string().max(1_500_000).regex(/^[A-Za-z0-9+/=]+$/);
@@ -29,6 +29,10 @@ const ProfileSchema = z.object({
   fit: z.string().max(600),
   look_for: z.array(z.string().max(120)).max(12),
   avoid: z.array(z.string().max(120)).max(10),
+  searches: z
+    .array(z.object({ query: z.string().max(120), shop_query: z.string().max(60), kind: z.enum(["clothing", "shoes", "accessories"]) }))
+    .max(16)
+    .optional(),
 });
 
 export const MAX_BOARD = 36;
@@ -61,6 +65,29 @@ export const ChatSchema = z.object({
 export const ProfileRequestSchema = z.object({
   board: z.array(photo.max(400_000)).min(1).max(MAX_BOARD),
   prefs: PrefsSchema.default(DEFAULT_PREFS),
+});
+
+export const DropSchema = z.object({
+  profile: ProfileSchema,
+  board: z.array(photo.max(400_000)).max(8).default([]),
+  prefs: PrefsSchema.default(DEFAULT_PREFS),
+  seen: z.array(z.string().max(200)).max(400).default([]),
+  passed: z.array(z.object({ title: z.string().max(300), source: z.string().max(80) })).max(40).default([]),
+  size: z.number().int().min(1).max(24).default(DROP_SIZE),
+  round: z.number().int().min(0).max(50).default(0),
+  more: z.boolean().default(false), // "Find more" rather than a new drop
+});
+
+export const RUN_ID = /^[a-z0-9]{6,32}$/;
+
+export const DropTestSchema = z.object({
+  run: z.string().regex(RUN_ID),
+  board: z.string().max(40),
+  attempt: z.number().int().min(1).max(99).default(1), // a board tried again is saved separately
+  // Testing your own board: its style read and up to 16 of its photos, best first.
+  own: z
+    .object({ profile: ProfileSchema, board: z.array(photo.max(400_000)).min(3).max(16), prefs: PrefsSchema.default(DEFAULT_PREFS) })
+    .optional(),
 });
 
 export function badRequest(error: z.ZodError): Response {

@@ -65,6 +65,12 @@ export class Meter {
     this.depop.usd += DEPOP_RUN_USD + listings * depopListingUsd();
   }
 
+  /** Count everything another meter counted. */
+  add(other: Meter): void {
+    for (const k of Object.keys(this.claude) as (keyof ClaudeTally)[]) this.claude[k] += other.claude[k];
+    for (const k of Object.keys(this.depop) as (keyof DepopTally)[]) this.depop[k] += other.depop[k];
+  }
+
   get usd(): number {
     return this.claude.usd + this.depop.usd;
   }
