@@ -1,5 +1,8 @@
+import { after } from "next/server";
 import { authorized, unauthorized } from "@/lib/server/auth";
 import { claudeConfigured, friendlyError } from "@/lib/server/claude";
+import { logCost } from "@/lib/server/costlog";
+import { Meter } from "@/lib/server/costs";
 import { readBoard } from "@/lib/server/profile";
 import { badRequest, ProfileRequestSchema } from "@/lib/server/schemas";
 
@@ -12,8 +15,11 @@ export async function POST(req: Request) {
   }
   const parsed = ProfileRequestSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return badRequest(parsed.error);
+  const meter = new Meter();
+  after(() => logCost(meter, "read"));
   try {
-    const profile = await readBoard(parsed.data.board, parsed.data.prefs, req.signal);
+    const profile = await readBoard(parsed.data.board, parsed.data.prefs, { signal: req.signal, meter });
+    meter.ok = true;
     return Response.json({ profile });
   } catch (e) {
     if (!req.signal.aborted) console.error("board read failed", e);

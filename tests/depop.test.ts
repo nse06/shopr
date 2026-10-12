@@ -62,8 +62,10 @@ describe("Depop search through Apify", () => {
     vi.stubEnv("APIFY_TOKEN", "apify_api_test");
     const fetchMock = vi.fn(async () => Response.json([item()]));
     vi.stubGlobal("fetch", fetchMock);
-    const out = await depopSearch("chore coat", { department: "any" });
+    const scraped: number[] = [];
+    const out = await depopSearch("chore coat", { department: "any", onScraped: (n) => scraped.push(n) });
     expect(out.map((l) => l.id)).toEqual(["depop:101"]);
+    expect(scraped).toEqual([1]); // what Apify bills for
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toMatch(/^https:\/\/api\.apify\.com\/v2\/acts\/khadinakbar~depop-scraper\/run-sync-get-dataset-items\?/);
     expect(url).toContain("timeout=45");

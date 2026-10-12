@@ -3,6 +3,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Prefs, StyleProfile } from "../types";
 import { claude, FALLBACKS, finalText, MODEL, StylistError } from "./claude";
+import type { Meter } from "./costs";
 import { aboutMe } from "./stylist";
 
 const SYSTEM = `You are shopr, a personal stylist who knows clothes deeply: vintage and secondhand, workwear and military surplus, tailoring, sportswear, Japanese and European designers, archive fashion, and how sellers describe things.
@@ -59,7 +60,7 @@ type Create = (
 export async function readBoard(
   board: string[],
   prefs: Prefs,
-  signal?: AbortSignal,
+  { signal, meter }: { signal?: AbortSignal; meter?: Meter } = {},
   create: Create = (params, options) => claude().beta.messages.create(params, options),
 ): Promise<StyleProfile> {
   const content: Anthropic.Beta.BetaContentBlockParam[] = [];
@@ -80,6 +81,7 @@ export async function readBoard(
     },
     { signal },
   );
+  meter?.claudeUsed(response);
   let parsed: StyleProfile;
   try {
     parsed = JSON.parse(finalText(response));

@@ -99,3 +99,16 @@ export type BoardSummary = {
   tags: string[]; // words people can search by
   updatedAt: number;
 };
+
+// What running shopr costs (estimates from list prices), shown in Settings.
+export type CostKind = "picks" | "chat" | "more" | "read";
+
+export type CostEntry = { at: number; kind: CostKind; usd: number; claudeUsd: number; depopUsd: number; ok: boolean };
+
+export type CostTotals = {
+  usd: number;
+  requests: number;
+  byKind: Partial<Record<CostKind, { n: number; claudeUsd: number; depopUsd: number }>>;
+};
+
+export type CostSummary = { enabled: boolean; week: CostTotals; month: CostTotals; recent: CostEntry[] };

@@ -84,7 +84,13 @@ export function parseDepop(items: DepopItem[], department: Department = "any"): 
 /** One actor run for one search; resolves to the listings it found. */
 export async function depopSearch(
   query: string,
-  opts: { department: Department; maxItems?: number; signal?: AbortSignal; timeoutMs?: number },
+  opts: {
+    department: Department;
+    maxItems?: number;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    onScraped?: (listings: number) => void; // how many listings Apify returned (and billed)
+  },
 ): Promise<Listing[]> {
   const timeoutMs = opts.timeoutMs ?? DEPOP_TIMEOUT_MS;
   const params = new URLSearchParams({ format: "json", clean: "true", timeout: String(Math.ceil(timeoutMs / 1000)) });
@@ -112,6 +118,8 @@ export async function depopSearch(
   if (r.status === 402) throw new DepopError("Your Apify account is out of credit, so Depop was skipped.");
   if (r.status === 408) throw new DepopError("Depop was slow to answer this time.");
   if (!r.ok) throw new DepopError(`Depop search failed (Apify answered HTTP ${r.status}).`);
-  const body = (await r.json()) as unknown;
-  return parseDepop(Array.isArray(body) ? (body as DepopItem[]) : [], opts.department);
+  const body = (await r.json().catch(() => null)) as unknown;
+  const items = Array.isArray(body) ? (body as DepopItem[]) : [];
+  opts.onScraped?.(items.length);
+  return parseDepop(items, opts.department);
 }

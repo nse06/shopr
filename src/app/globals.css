@@ -1700,3 +1700,65 @@ code {
     margin: 0;
   }
 }
+
+/* ---------- What it costs ---------- */
+
+.costs {
+  display: grid;
+  gap: 16px;
+  max-width: 620px;
+}
+
+.cost-totals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.cost-totals > div {
+  display: grid;
+  gap: 2px;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--wash);
+}
+
+.cost-totals strong {
+  font-family: var(--display);
+  font-weight: 600;
+  font-variation-settings: "SOFT" 100, "WONK" 1;
+  font-size: 30px;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.cost-kinds,
+.cost-recent {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.cost-kinds b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.cost-recent li {
+  display: grid;
+  grid-template-columns: 7.5em minmax(0, 1fr) auto;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
+  font-variant-numeric: tabular-nums;
+}
+
+.cost-recent li > span:last-child {
+  color: var(--ink);
+  font-weight: 600;
+}

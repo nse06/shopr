@@ -149,6 +149,7 @@ export async function sendMessage({ text = "", intent = "chat", photo, photoUrl 
         profile: freshProfile,
         prefs: s.prefs,
         seen,
+        intent,
       }),
     });
     if (!res.ok) return fail(await failure(res));

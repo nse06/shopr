@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Photo } from "@/lib/server/fetching";
 import { interleave, keep, roundRobin, runSearch, type Deps } from "@/lib/server/search";
 import { boardMessage, historyMessages, runStylist, searchStatus, toReply, toSearchInput, type ChatInput, type StylistDeps } from "@/lib/server/stylist";
+import { Meter } from "@/lib/server/costs";
 import { DEFAULT_PREFS, type Listing } from "@/lib/types";
 
 const listing = (id: string, extra: Partial<Listing> = {}): Listing => ({
@@ -201,7 +202,9 @@ describe("stylist", () => {
         return message([{ type: "text", text: JSON.stringify({ message: "Found one.", picks: ["L2"], follow_ups: ["More"] }) } as Anthropic.Beta.BetaContentBlock], "end_turn");
       },
     };
-    const reply = await runStylist(input(), (e) => events.push(`${e.type}: ${e.text}`), undefined, deps);
+    const meter = new Meter();
+    const reply = await runStylist(input(), (e) => events.push(`${e.type}: ${e.text}`), { meter }, deps);
+    expect(meter.claude.calls).toBe(2); // both Claude calls were counted
     expect(reply.picks.map((p) => p.id)).toEqual(["b"]);
     expect(reply.query).toBe("chore coat");
     expect(events).toEqual(["status: Thinking", "status: Searching 20 shops for “chore coat”", "notice: eBay failed", "status: Looking through 2 listings"]);

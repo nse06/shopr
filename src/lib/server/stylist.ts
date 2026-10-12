@@ -5,6 +5,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { HistoryTurn, Listing, Prefs, StyleProfile } from "../types";
 import { claude, FALLBACKS, finalText, MODEL, StylistError } from "./claude";
+import type { Meter } from "./costs";
 import { depopConfigured } from "./depop";
 import { ebayConfigured } from "./ebay";
 import type { Photo } from "./fetching";
@@ -258,7 +259,7 @@ export function toSearchInput(raw: unknown): SearchInput {
 export async function runStylist(
   input: ChatInput,
   emit: (event: { type: "status" | "notice"; text: string }) => void,
-  signal?: AbortSignal,
+  { signal, meter }: { signal?: AbortSignal; meter?: Meter } = {},
   deps: StylistDeps = realDeps,
 ): Promise<Reply> {
   const sources = deps.sources();
@@ -282,6 +283,7 @@ export async function runStylist(
       },
       { signal },
     );
+    meter?.claudeUsed(response);
 
     const toolUses = response.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use");
     if (response.stop_reason === "tool_use" && toolUses.length) {
@@ -312,6 +314,7 @@ export async function runStylist(
           photo: input.photo?.data ?? null,
           board: input.board,
           signal,
+          meter,
         });
         for (const problem of outcome.problems) emit({ type: "notice", text: problem });
         emit({ type: "status", text: `Looking through ${outcome.candidates.length} listings` });

@@ -1,5 +1,8 @@
+import { after } from "next/server";
 import { authorized, unauthorized } from "@/lib/server/auth";
 import { claudeConfigured, friendlyError } from "@/lib/server/claude";
+import { logCost } from "@/lib/server/costlog";
+import { Meter } from "@/lib/server/costs";
 import { fetchPhoto, type Photo } from "@/lib/server/fetching";
 import { badRequest, ChatSchema } from "@/lib/server/schemas";
 import { runStylist } from "@/lib/server/stylist";
@@ -15,7 +18,9 @@ export async function POST(req: Request) {
   }
   const parsed = ChatSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return badRequest(parsed.error);
-  const { photo: attached, photoUrl, ...rest } = parsed.data;
+  const { photo: attached, photoUrl, intent, ...rest } = parsed.data;
+  const meter = new Meter();
+  after(() => logCost(meter, intent === "feed" ? "picks" : intent));
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -35,7 +40,8 @@ export async function POST(req: Request) {
       try {
         let photo: Photo | null = attached ? { data: attached, mediaType: "image/jpeg" } : null;
         if (!photo && photoUrl) photo = await fetchPhoto(photoUrl, req.signal, "image/jpeg,image/png;q=0.9");
-        const reply = await runStylist({ ...rest, photo }, send, req.signal);
+        const reply = await runStylist({ ...rest, photo }, send, { signal: req.signal, meter });
+        meter.ok = true;
         send({ type: "reply", ...reply });
       } catch (e) {
         if (!req.signal.aborted) console.error("chat turn failed", e);

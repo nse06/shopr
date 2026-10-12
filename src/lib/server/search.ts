@@ -2,6 +2,7 @@
 // candidates (with photos) for Claude to look at.
 
 import type { Department, Kind, Listing, Prefs } from "../types";
+import type { Meter } from "./costs";
 import { depopConfigured, depopSearch } from "./depop";
 import { ebayConfigured, ebayImageSearch, ebaySearch } from "./ebay";
 import { fetchPhoto, type Photo } from "./fetching";
@@ -26,6 +27,7 @@ export type SearchContext = {
   photo: string | null; // base64 JPEG the person attached to this message
   board: string[]; // base64 JPEGs of the moodboard, numbered from 1
   signal?: AbortSignal;
+  meter?: Meter; // adds up what the request spends
 };
 
 export type Candidate = { listing: Listing; photo: Photo };
@@ -128,9 +130,15 @@ export async function runSearch(input: SearchInput, ctx: SearchContext, deps: De
 
   // Every search goes to eBay, Depop and every shop at once.
   const depopLanes = searches.slice(0, depopOn ? DEPOP_SEARCHES : 0).map((s) => async (): Promise<Lane> => {
+    let counted = false;
+    const onScraped = (listings: number) => {
+      counted = true;
+      ctx.meter?.depopRun(listings);
+    };
     try {
-      return { label: `Depop: ${s.query}`, items: await deps.depopSearch(s.query, { department, signal: ctx.signal }) };
+      return { label: `Depop: ${s.query}`, items: await deps.depopSearch(s.query, { department, signal: ctx.signal, onScraped }) };
     } catch (e) {
+      if (!counted) ctx.meter?.depopRun(0); // a run that failed may still have started
       if (!depopFailed) problems.push((e as Error).message);
       depopFailed = true;
       return { label: `Depop: ${s.query}`, items: [] };

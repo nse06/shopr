@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import { refreshStatus } from "@/lib/client/api";
+import { useEffect, useState } from "react";
+import { call, refreshStatus } from "@/lib/client/api";
 import { savePassword, setPrefs, setState, useApp } from "@/lib/client/store";
-import type { Department } from "@/lib/types";
+import type { CostKind, CostSummary, Department } from "@/lib/types";
 
 const TOPS = ["XS", "S", "M", "L", "XL", "XXL"];
 const WAIST = ["26", "27", "28", "29", "30", "31", "32", "33", "34", "36", "38", "40"];
@@ -42,6 +42,93 @@ function Check({ ok, children }: { ok: boolean | undefined; children: React.Reac
       </span>
       <span>{children}</span>
     </li>
+  );
+}
+
+/** "27¢", "0.4¢" or "$4.12". */
+function dollars(usd: number): string {
+  if (usd >= 1) return `$${usd.toFixed(2)}`;
+  const cents = usd * 100;
+  return cents === 0 || cents >= 10 ? `${Math.round(cents)}¢` : `${cents.toFixed(1)}¢`;
+}
+
+const KIND_LABELS: Record<CostKind, string> = {
+  picks: "New picks from your board",
+  chat: "A message to your stylist",
+  more: "Finding more",
+  read: "Reading your board",
+};
+
+/** What the last week and month cost in Claude and Depop, from the server's log. */
+function Costs() {
+  const [data, setData] = useState<CostSummary | "error" | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    call("/api/costs", { cache: "no-store" })
+      .then(async (res) => (res.ok ? ((await res.json()) as CostSummary) : "error"))
+      .catch(() => "error" as const)
+      .then((result) => live && setData(result));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  if (data === null) {
+    return (
+      <p className="thinking">
+        <span>Adding it up</span>
+      </p>
+    );
+  }
+  if (data === "error") return <p className="muted">Couldn&apos;t load the costs just now.</p>;
+  if (!data.enabled) return <p className="muted">Switch on sharing (a Vercel Blob store, see the README) and shopr keeps a log of what it costs here.</p>;
+  if (!data.month.requests) return <p className="muted">Nothing yet. Costs show up here after your stylist&apos;s next answer.</p>;
+
+  const kinds = (Object.keys(KIND_LABELS) as CostKind[]).filter((k) => data.month.byKind[k]?.n);
+  return (
+    <div className="costs">
+      <div className="cost-totals">
+        <div>
+          <span className="label">Last 7 days</span>
+          <strong>{dollars(data.week.usd)}</strong>
+          <span className="muted">
+            {data.week.requests} request{data.week.requests === 1 ? "" : "s"}
+          </span>
+        </div>
+        <div>
+          <span className="label">Last 30 days</span>
+          <strong>{dollars(data.month.usd)}</strong>
+          <span className="muted">
+            {data.month.requests} request{data.month.requests === 1 ? "" : "s"}
+          </span>
+        </div>
+      </div>
+      <ul className="cost-kinds">
+        {kinds.map((k) => {
+          const t = data.month.byKind[k]!;
+          const parts = [`Claude ${dollars(t.claudeUsd / t.n)}`, t.depopUsd > 0 ? `Depop ${dollars(t.depopUsd / t.n)}` : null].filter(Boolean);
+          return (
+            <li key={k}>
+              <b>{KIND_LABELS[k]}</b>: about {dollars((t.claudeUsd + t.depopUsd) / t.n)} each ({parts.join(", ")}), {t.n} time{t.n === 1 ? "" : "s"}
+            </li>
+          );
+        })}
+      </ul>
+      <p className="label">Latest</p>
+      <ul className="cost-recent">
+        {data.recent.slice(0, 8).map((e) => (
+          <li key={`${e.at}-${e.kind}`}>
+            <span>{new Date(e.at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}</span>
+            <span>
+              {KIND_LABELS[e.kind]}
+              {e.ok ? "" : " (didn't finish)"}
+            </span>
+            <span>{dollars(e.usd)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -188,11 +275,18 @@ export function Settings() {
 
       <section>
         <div>
-          <h2 className="section-title">Your data</h2>
+          <h2 className="section-title">What it costs</h2>
           <p className="muted">
-            Everything stays in this browser on this device, except a board you choose to share. Each message to your stylist costs a few cents of
-            Claude usage.
+            Estimated from Anthropic&apos;s and Apify&apos;s list prices for what your stylist used. Your Anthropic and Apify bills are the final word.
           </p>
+        </div>
+        <Costs />
+      </section>
+
+      <section>
+        <div>
+          <h2 className="section-title">Your data</h2>
+          <p className="muted">Everything stays in this browser on this device, except a board you choose to share.</p>
         </div>
         <div className="danger-zone">
           <button type="button" className="text-btn" onClick={() => clear("chat")} disabled={!chat.length}>
