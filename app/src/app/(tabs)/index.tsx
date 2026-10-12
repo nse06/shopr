@@ -1,3 +1,4 @@
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -148,6 +149,19 @@ export default function ShopScreen() {
           <Pressable onPress={() => setShowFilters(true)} accessibilityRole="button" hitSlop={8}>
             <Text style={{ color: t.accent, fontWeight: '700' }}>Edit</Text>
           </Pressable>
+          {boardCount !== 0 && (
+            <Pressable
+              onPress={startSearch}
+              disabled={running}
+              accessibilityRole="button"
+              accessibilityLabel="Search again for new listings"
+              hitSlop={8}
+              style={[styles.searchAgain, { borderColor: t.accent, opacity: running ? 0.45 : 1 }]}
+            >
+              <Ionicons name="refresh" size={15} color={t.accent} />
+              <Text style={{ color: t.accent, fontWeight: '700' }}>{running ? 'Searching' : 'Search again'}</Text>
+            </Pressable>
+          )}
         </View>
       )}
       <RunBanner run={run} />
@@ -234,4 +248,5 @@ const styles = StyleSheet.create({
   h1: { fontSize: 22, fontWeight: '700', marginBottom: 8, textAlign: 'center' },
   empty: { alignItems: 'center', paddingVertical: 48, paddingHorizontal: 12 },
   filterBar: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderRadius: 12, padding: 12 },
+  searchAgain: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderRadius: 16, paddingHorizontal: 10, paddingVertical: 5 },
 });
