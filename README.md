@@ -29,7 +29,7 @@ eBay keys come from [developer.ebay.com/my/keys](https://developer.ebay.com/my/k
 
 **4. Click Deploy.** About a minute later you get a link like `shopr-yourname.vercel.app`. That's your stylist.
 
-**5. Switch on sharing (optional, for Explore and shared boards).** In your Vercel project open **Storage → Create → Blob**. When it asks about access, choose **Public** (shared boards are public, and this can't be changed later), then connect the store to the project for all environments. Redeploy (**Deployments → ⋯ → Redeploy**). Settings in shopr will say "Sharing is on".
+**5. Switch on sharing (optional, for Explore and shared boards).** In your Vercel project open **Storage → Create → Blob**. When it asks about access, choose **Public** (shared boards are public, and this can't be changed later), then connect the store to the project (Production at least). Once `BLOB_STORE_ID` shows under **Settings → Environment Variables**, redeploy (**Deployments → ⋯ → Redeploy**): a deployment made before the store was connected can't see it. Settings in shopr will then say "Sharing is on".
 
 **On your iPhone:** open the link in Safari, tap **Share → Add to Home Screen**.
 
