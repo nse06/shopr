@@ -139,6 +139,10 @@ export default function ShopScreen() {
   }
 
   const needsFilters = prefs != null && !prefs.onboarded;
+  // Say so when a connected marketplace failed, instead of just showing fewer listings.
+  const sourceErrors = !running ? (run?.detail?.errors ?? []).filter((e) => /^(eBay|Etsy)/.test(e)) : [];
+  const marketplaceErrors = sourceErrors.length;
+  const failedSources = [...new Set(sourceErrors.map((e) => e.split(' ')[0]))].join(' and ');
   const header = (
     <View style={{ gap: 10, marginBottom: 14 }}>
       {prefs && (
@@ -165,6 +169,13 @@ export default function ShopScreen() {
         </View>
       )}
       <RunBanner run={run} />
+      {marketplaceErrors > 0 && (
+        <Pressable onPress={() => router.navigate('/setup')} accessibilityRole="link">
+          <Text style={[styles.notice, { color: t.nope, borderColor: t.nope }]}>
+            Some {failedSources} searches didn&apos;t work last time. Tap to see what went wrong.
+          </Text>
+        </Pressable>
+      )}
       <ErrorText message={error} />
     </View>
   );
@@ -248,5 +259,6 @@ const styles = StyleSheet.create({
   h1: { fontSize: 22, fontWeight: '700', marginBottom: 8, textAlign: 'center' },
   empty: { alignItems: 'center', paddingVertical: 48, paddingHorizontal: 12 },
   filterBar: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderRadius: 12, padding: 12 },
+  notice: { borderWidth: 1, borderRadius: 12, padding: 12, fontSize: 14, lineHeight: 20 },
   searchAgain: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderRadius: 16, paddingHorizontal: 10, paddingVertical: 5 },
 });

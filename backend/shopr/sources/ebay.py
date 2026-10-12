@@ -53,10 +53,14 @@ class EbayClient:
         return h
 
     async def search(self, query: str, limit: int = 50, min_price: float | None = None, max_price: float | None = None) -> SearchResult:
-        params = {"q": query, "category_ids": self.s.ebay_category_ids, "limit": limit}
+        params = {"q": query, "limit": limit}
         if f := price_filter(min_price, max_price):
             params["filter"] = f
-        r = await self.http.get(f"{API}/buy/browse/v1/item_summary/search", headers=await self._headers(), params=params)
+        r = await self._with_category(
+            category_for(query, self.s.ebay_category_ids),
+            lambda p, h: self.http.get(f"{API}/buy/browse/v1/item_summary/search", headers=h, params=p),
+            params,
+        )
         if r.status_code != 200:
             raise SourceError(f"eBay search '{query}': HTTP {r.status_code} {r.text[:200]}")
         return SearchResult(query, parse_items(r.json()))
@@ -64,18 +68,51 @@ class EbayClient:
     async def search_by_image(
         self, image_bytes: bytes, label: str, limit: int = 50, min_price: float | None = None, max_price: float | None = None
     ) -> SearchResult:
-        params = {"category_ids": self.s.ebay_category_ids, "limit": limit}
+        params = {"limit": limit}
         if f := price_filter(min_price, max_price):
             params["filter"] = f
-        r = await self.http.post(
-            f"{API}/buy/browse/v1/item_summary/search_by_image",
-            headers={**await self._headers(), "Content-Type": "application/json"},
-            params=params,
-            json={"image": base64.b64encode(image_bytes).decode()},
+        body = {"image": base64.b64encode(image_bytes).decode()}
+        r = await self._with_category(
+            category_for("", self.s.ebay_category_ids),
+            lambda p, h: self.http.post(
+                f"{API}/buy/browse/v1/item_summary/search_by_image",
+                headers={**h, "Content-Type": "application/json"},
+                params=p,
+                json=body,
+            ),
+            params,
         )
         if r.status_code != 200:
             raise SourceError(f"eBay image search ({label}): HTTP {r.status_code} {r.text[:200]}")
         return SearchResult(f"[image] {label}", parse_items(r.json()))
+
+    async def _with_category(self, category: str | None, send, params: dict) -> httpx.Response:
+        """Search within one category (eBay takes only one per request). If eBay rejects
+        the category, search again without it rather than lose the whole search."""
+        headers = await self._headers()
+        if category:
+            r = await send({**params, "category_ids": category}, headers)
+            if r.status_code != 400:
+                return r
+        return await send(params, headers)
+
+
+# Words that mean a search is for shoes or accessories rather than clothing.
+_SHOES = re.compile(r"\b(boots?|shoes?|sneakers?|loafers?|derbys?|oxfords|brogues|moccasins?|sandals?|trainers)\b", re.I)
+_ACCESSORIES = re.compile(r"\b(belts?|caps?|hats?|beanies?|bags?|scarf|scarves|wallets?|sunglasses|ties?|gloves)\b", re.I)
+
+
+def category_for(query: str, configured: str) -> str | None:
+    """Pick the one eBay category to search: configured is "clothing,shoes,accessories"
+    (by default Men's Clothing 1059, Men's Shoes 93427, Men's Accessories 4250)."""
+    ids = [c.strip() for c in configured.split(",") if c.strip()]
+    if not ids:
+        return None
+    if len(ids) > 1 and _SHOES.search(query):
+        return ids[1]
+    if len(ids) > 2 and _ACCESSORIES.search(query):
+        return ids[2]
+    return ids[0]
 
 
 def price_filter(min_price: float | None, max_price: float | None) -> str | None:

@@ -245,3 +245,50 @@ def test_pinboard_places_photos_from_before_the_pinboard(client):
     db.execute("UPDATE board_items SET x = NULL, y = NULL, w = NULL, aspect = NULL, z = NULL")
     item = client.get("/api/board").json()[0]
     assert item["x"] is not None and item["aspect"] == 1.0 and item["z"] is not None
+
+
+@respx.mock(assert_all_mocked=True, assert_all_called=False)
+def test_ebay_listings_reach_the_grid(client, respx_mock):
+    respx_mock.route(host="testserver").pass_through()
+    respx_mock.post("https://api.ebay.com/identity/v1/oauth2/token").mock(
+        return_value=httpx.Response(200, json={"access_token": "t", "expires_in": 7200})
+    )
+    assert client.put("/api/keys", json={"ebay_client_id": "id", "ebay_client_secret": "secret"}).status_code == 200
+
+    def summaries(prefix, n):
+        return {"itemSummaries": [{
+            "itemId": f"v1|{prefix}{i}|0", "title": f"Vintage brown chore coat {prefix}{i} - M",
+            "price": {"value": "80", "currency": "USD"},
+            "image": {"imageUrl": f"https://i.ebayimg.com/{prefix}{i}/s-l225.jpg"},
+            "itemWebUrl": f"https://www.ebay.com/itm/{prefix}{i}",
+        } for i in range(n)]}
+
+    keyword = respx_mock.get("https://api.ebay.com/buy/browse/v1/item_summary/search").mock(
+        return_value=httpx.Response(200, json=summaries("k", 5))
+    )
+    respx_mock.post("https://api.ebay.com/buy/browse/v1/item_summary/search_by_image").mock(
+        return_value=httpx.Response(200, json=summaries("i", 3))
+    )
+    respx_mock.get(url__regex=r"https://i\.ebayimg\.com/.*").mock(
+        return_value=httpx.Response(200, content=_png((130, 72, 32), seed=7))
+    )
+    # The mocked shop has nothing, so everything in the grid must come from eBay.
+    respx_mock.get("https://shop.example/cart.js").mock(return_value=httpx.Response(200, json={"currency": "USD"}))
+    respx_mock.get("https://shop.example/search/suggest.json").mock(
+        return_value=httpx.Response(200, json={"resources": {"results": {"products": []}}})
+    )
+
+    files = [("files", (f"b{i}.png", _png(c, seed=1000 + i), "image/png")) for i, c in enumerate(BROWNS)]
+    client.post("/api/board/upload", files=files)
+    client.put("/api/prefs", json={"min_price": 50, "max_price": 150, "onboarded": True})
+    assert client.post("/api/refresh").json()["started"]
+    run = _wait_for_run(client)
+    assert run["status"] == "done" and not run["detail"]["errors"], run
+
+    # One category per search, and the price range is part of the search.
+    for call in keyword.calls:
+        params = call.request.url.params
+        assert params["category_ids"] in {"1059", "93427", "4250"}
+        assert params["filter"] == "price:[50..150],priceCurrency:USD"
+    sources = {x["source"] for x in client.get("/api/feed?limit=100").json()["items"]}
+    assert sources == {"ebay"}

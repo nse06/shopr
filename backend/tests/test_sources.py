@@ -86,7 +86,7 @@ async def test_ebay_search_auths_and_searches():
     req = search.calls[0].request
     assert req.headers["Authorization"] == "Bearer tok"
     assert req.url.params["q"] == "chore coat"
-    assert req.url.params["category_ids"] == "1059,93427,4250"
+    assert req.url.params["category_ids"] == "1059"  # eBay accepts one category per search
 
 
 def test_etsy_parse():
@@ -204,3 +204,37 @@ async def test_ebay_search_sends_price_range_and_reads_sizes():
         res = await EbayClient(s, http).search("chore coat", min_price=20, max_price=150)
     assert route.calls[0].request.url.params["filter"] == "price:[20..150],priceCurrency:USD"
     assert res.listings[0]["sizes"] == ["L"]
+
+
+def test_ebay_category_for_query():
+    from shopr.sources.ebay import category_for
+
+    ids = "1059,93427,4250"
+    assert category_for("vintage chore coat", ids) == "1059"
+    assert category_for("brown leather work boots", ids) == "93427"
+    assert category_for("western leather belt", ids) == "4250"
+    assert category_for("", ids) == "1059"
+    assert category_for("boots", "1059") == "1059"
+    assert category_for("x", "") is None
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_ebay_retries_without_a_rejected_category():
+    s = Settings(ebay_client_id="id", ebay_client_secret="secret")
+    respx.post("https://api.ebay.com/identity/v1/oauth2/token").mock(
+        return_value=httpx.Response(200, json={"access_token": "tok", "expires_in": 7200})
+    )
+    route = respx.get("https://api.ebay.com/buy/browse/v1/item_summary/search")
+    route.side_effect = [
+        httpx.Response(400, json={"errors": [{"errorId": 12030, "message": "too many categories"}]}),
+        httpx.Response(200, json={"itemSummaries": [{
+            "itemId": "v1|2|0", "title": "Chore coat", "price": {"value": "60", "currency": "USD"},
+            "image": {"imageUrl": "https://i.ebayimg.com/y/s-l225.jpg"}, "itemWebUrl": "https://www.ebay.com/itm/2",
+        }]}),
+    ]
+    async with httpx.AsyncClient() as http:
+        res = await EbayClient(s, http).search("chore coat")
+    assert [x["id"] for x in res.listings] == ["ebay:v1|2|0"]
+    assert route.calls[0].request.url.params["category_ids"] == "1059"
+    assert "category_ids" not in route.calls[1].request.url.params
