@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/.venv/
+
+# Your data: moodboard images, listings database, API keys
+backend/data/
+backend/.env
+
+.DS_Store
