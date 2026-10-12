@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Department } from "@/lib/types";
+import { useGo } from "@/lib/client/links";
+import { passOn, undoPass } from "@/lib/client/store";
+import type { Department, Listing } from "@/lib/types";
 
 /** The progress line while the stylist works: what it's doing and for how long. */
 export function Thinking({ status, notices, startedAt }: { status: string; notices: string[]; startedAt: number }) {
@@ -39,12 +41,13 @@ const SITES: { name: string; url: (q: string, d: Department) => string }[] = [
 
 /** Links to the same search on sites shopr can't search itself. */
 export function Elsewhere({ query, department }: { query: string; department: Department }) {
+  const go = useGo();
   return (
     <p className="elsewhere">
       Try “{query}” on{" "}
       {SITES.map((site, i) => (
         <span key={site.name}>
-          <a href={site.url(query, department)} target="_blank" rel="noopener noreferrer">
+          <a href={go({ url: site.url(query, department), source: site.name, title: `Search: ${query}` }, "elsewhere")} target="_blank" rel="noopener">
             {site.name}
           </a>
           {i < SITES.length - 2 ? ", " : i === SITES.length - 2 ? " or " : ""}
@@ -52,6 +55,35 @@ export function Elsewhere({ query, department }: { query: string; department: De
       ))}
       .
     </p>
+  );
+}
+
+/** "Not for me" with a few seconds to undo it. */
+export function usePass() {
+  const [last, setLast] = useState<{ listing: Listing; index: number } | null>(null);
+  useEffect(() => {
+    if (!last) return;
+    const t = setTimeout(() => setLast(null), 6000);
+    return () => clearTimeout(t);
+  }, [last]);
+  return {
+    last,
+    pass: (listing: Listing) => setLast({ listing, index: passOn(listing) }),
+    undo: () => {
+      if (last) undoPass(last.listing, last.index);
+      setLast(null);
+    },
+  };
+}
+
+export function PassToast({ onUndo }: { onUndo: () => void }) {
+  return (
+    <div className="toast" role="status">
+      <span>Hidden. Your stylist will skip things like it.</span>
+      <button type="button" onClick={onUndo}>
+        Undo
+      </button>
+    </div>
   );
 }
 

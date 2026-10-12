@@ -4,14 +4,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { sendMessage } from "@/lib/client/api";
 import { useApp } from "@/lib/client/store";
-import { Elsewhere, requestLabel, Thinking } from "./Bits";
-import { ListingCard } from "./Listing";
+import { Elsewhere, PassToast, requestLabel, Thinking, usePass } from "./Bits";
+import { Disclosure, ListingCard } from "./Listing";
 
 export function MorePicks() {
   const { loaded, feed, pending, feedError, moreNote, status, prefs } = useApp();
   const router = useRouter();
   const finding = pending?.intent === "more";
   const ready = status?.claude !== false;
+  const { last: passed, pass, undo } = usePass();
 
   return (
     <main className="page">
@@ -39,6 +40,8 @@ export function MorePicks() {
             <ListingCard
               key={l.id}
               listing={l}
+              where="more"
+              onPass={finding ? undefined : () => pass(l)}
               onMore={
                 pending || !ready
                   ? undefined
@@ -64,8 +67,10 @@ export function MorePicks() {
           {moreNote && !finding && <p className="muted">{moreNote}</p>}
           {feedError?.intent === "more" && !finding && <p className="error">{feedError.text}</p>}
           {feed.query && <Elsewhere query={feed.query} department={prefs.department} />}
+          <Disclosure />
         </div>
       )}
+      {passed && <PassToast onUndo={undo} />}
     </main>
   );
 }

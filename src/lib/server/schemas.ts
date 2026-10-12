@@ -52,6 +52,8 @@ export const ChatSchema = z.object({
   profile: ProfileSchema.nullable().default(null),
   prefs: PrefsSchema.default(DEFAULT_PREFS),
   seen: z.array(z.string().max(200)).max(400).default([]),
+  // Pieces they tapped "Not for me" on lately.
+  passed: z.array(z.object({ title: z.string().max(300), source: z.string().max(80) })).max(40).default([]),
   // What the person did (a message, new picks from the board, or finding more), for the cost log.
   intent: z.enum(["chat", "feed", "more"]).default("chat"),
 });

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { call, refreshStatus } from "@/lib/client/api";
 import { savePassword, setPrefs, setState, useApp } from "@/lib/client/store";
-import type { CostKind, CostSummary, Department } from "@/lib/types";
+import type { ClickSummary, CostKind, CostSummary, Department } from "@/lib/types";
 
 const TOPS = ["XS", "S", "M", "L", "XL", "XXL"];
 const WAIST = ["26", "27", "28", "29", "30", "31", "32", "33", "34", "36", "38", "40"];
@@ -59,20 +59,25 @@ const KIND_LABELS: Record<CostKind, string> = {
   read: "Reading your board",
 };
 
-/** What the last week and month cost in Claude and Depop, from the server's log. */
-function Costs() {
-  const [data, setData] = useState<CostSummary | "error" | null>(null);
-
+/** JSON from one of shopr's own routes: null while loading, "error" if it failed. */
+function useServerData<T>(path: string): T | "error" | null {
+  const [data, setData] = useState<T | "error" | null>(null);
   useEffect(() => {
     let live = true;
-    call("/api/costs", { cache: "no-store" })
-      .then(async (res) => (res.ok ? ((await res.json()) as CostSummary) : "error"))
+    call(path, { cache: "no-store" })
+      .then(async (res) => (res.ok ? ((await res.json()) as T) : "error"))
       .catch(() => "error" as const)
       .then((result) => live && setData(result));
     return () => {
       live = false;
     };
-  }, []);
+  }, [path]);
+  return data;
+}
+
+/** What the last week and month cost in Claude and Depop, from the server's log. */
+function Costs() {
+  const data = useServerData<CostSummary>("/api/costs");
 
   if (data === null) {
     return (
@@ -132,19 +137,79 @@ function Costs() {
   );
 }
 
+const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** Taps through to listings: how many, to which sellers, and through whose boards. */
+function Clicks() {
+  const data = useServerData<ClickSummary>("/api/clicks");
+  if (data === null) {
+    return (
+      <p className="thinking">
+        <span>Counting</span>
+      </p>
+    );
+  }
+  if (data === "error") return <p className="muted">Couldn&apos;t load the clicks just now.</p>;
+  if (!data.enabled) return <p className="muted">Switch on sharing (a Vercel Blob store, see the README) and shopr counts clicks here.</p>;
+  if (!data.month.clicks) return <p className="muted">No clicks yet. Every tap on a pick is counted here.</p>;
+
+  const ranked = (counts: Record<string, number>) => Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const creators = ranked(data.month.byCreator);
+  return (
+    <div className="costs">
+      <div className="cost-totals">
+        <div>
+          <span className="label">Last 7 days</span>
+          <strong>{data.week.clicks}</strong>
+          <span className="muted">{data.week.clicks === 1 ? "click" : "clicks"}</span>
+        </div>
+        <div>
+          <span className="label">Last 30 days</span>
+          <strong>{data.month.clicks}</strong>
+          <span className="muted">{data.month.clicks === 1 ? "click" : "clicks"}</span>
+        </div>
+      </div>
+      <ul className="cost-kinds">
+        <li>
+          <b>Where they went</b>: {ranked(data.month.bySource).map(([source, n]) => `${source} ${n}`).join(", ")}
+        </li>
+        {creators.length > 0 && (
+          <li>
+            <b>Through creators&apos; boards</b>: {creators.map(([handle, n]) => `@${handle} ${n}`).join(", ")}
+          </li>
+        )}
+      </ul>
+      <p className="label">Latest</p>
+      <ul className="cost-recent">
+        {data.recent.slice(0, 8).map((c) => (
+          <li key={`${c.at}-${c.title}`}>
+            <span>{new Date(c.at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}</span>
+            <span>
+              {c.title || "A listing"} ({c.source}
+              {c.via ? `, via @${c.via}` : ""})
+            </span>
+            <span>{c.priceUsd != null ? `$${c.priceUsd}` : ""}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function Settings() {
-  const { prefs, status, chat, board, saved } = useApp();
+  const { prefs, status, chat, board, saved, passed } = useApp();
   // Typed text for the budget, so a half-typed number isn't rewritten under your fingers.
   const [min, setMin] = useState<string | null>(null);
   const [max, setMax] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
 
-  function clear(what: "chat" | "board" | "saved") {
+  function clear(what: "chat" | "board" | "saved" | "passed") {
     if (confirm !== what) return setConfirm(what);
     setConfirm(null);
     if (what === "chat") setState({ chat: [] });
     if (what === "board") setState({ board: [], profile: null, readError: null });
     if (what === "saved") setState({ saved: [] });
+    if (what === "passed") setState({ passed: [] });
   }
 
   return (
@@ -252,6 +317,12 @@ export function Settings() {
               ? "is on: people can share their boards and browse Explore."
               : "is off. In Vercel, open Storage, create a Blob store and connect it to this project, so people can share boards."}
           </Check>
+          <Check ok={status?.referrals}>
+            <b>Referral links</b>{" "}
+            {status?.referrals
+              ? "are on: eBay pays a commission on sales from your picks, and a note under the picks says so."
+              : "are off. Join the eBay Partner Network and add your campaign ID as EBAY_CAMPAIGN_ID to earn a commission on eBay sales."}
+          </Check>
           <Check ok={status?.passwordRequired}>
             <b>Password lock</b>{" "}
             {status?.passwordRequired
@@ -285,6 +356,16 @@ export function Settings() {
 
       <section>
         <div>
+          <h2 className="section-title">Clicks</h2>
+          <p className="muted">
+            Taps through to listings. Shops and referral networks want to see these, and they show which creators&apos; boards lead to visits.
+          </p>
+        </div>
+        <Clicks />
+      </section>
+
+      <section>
+        <div>
           <h2 className="section-title">Your data</h2>
           <p className="muted">Everything stays in this browser on this device, except a board you choose to share.</p>
         </div>
@@ -297,6 +378,13 @@ export function Settings() {
           </button>
           <button type="button" className="text-btn" onClick={() => clear("saved")} disabled={!saved.length}>
             {confirm === "saved" ? "Tap again to clear saved pieces" : "Clear saved pieces"}
+          </button>
+          <button type="button" className="text-btn" onClick={() => clear("passed")} disabled={!passed.length}>
+            {confirm === "passed"
+              ? "Tap again to forget them"
+              : passed.length
+                ? `Forget the ${count(passed.length, "piece")} you said no to`
+                : "Forget the pieces you said no to"}
           </button>
         </div>
       </section>

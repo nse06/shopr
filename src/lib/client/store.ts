@@ -47,6 +47,7 @@ export type Feed = {
 export type Intent = "chat" | "feed" | "more";
 
 export type SavedItem = Listing & { savedAt: number };
+export type PassedItem = { id: string; title: string; source: string; at: number }; // tapped "Not for me"
 export type ProfileRecord = { profile: StyleProfile; boardKey: string; at: number };
 
 /** Your public board. The key proves this device owns it (the server keeps only its hash). */
@@ -70,6 +71,7 @@ export type State = {
   prefs: Prefs;
   profile: ProfileRecord | null;
   publish: Publish | null;
+  passed: PassedItem[]; // newest first
   // Not stored:
   status: Status | null;
   locked: boolean; // the server wants a password
@@ -82,7 +84,7 @@ export type State = {
   publishError: string | null;
 };
 
-const STORED = ["board", "feed", "chat", "saved", "prefs", "profile", "publish"] as const;
+const STORED = ["board", "feed", "chat", "saved", "prefs", "profile", "publish", "passed"] as const;
 type StoredKey = (typeof STORED)[number];
 
 const INITIAL: State = {
@@ -94,6 +96,7 @@ const INITIAL: State = {
   prefs: DEFAULT_PREFS,
   profile: null,
   publish: null,
+  passed: [],
   status: null,
   locked: false,
   pending: null,
@@ -222,6 +225,25 @@ export function toggleSaved(listing: Listing) {
       ? { saved: s.saved.filter((x) => x.id !== listing.id) }
       : { saved: [{ ...listing, savedAt: Date.now() }, ...s.saved] },
   );
+}
+
+/** "Not for me": take a pick off the feed (the next one moves up) and remember it. Returns where it was, for undo. */
+export function passOn(listing: Listing): number {
+  const index = state.feed?.picks.findIndex((p) => p.id === listing.id) ?? -1;
+  setState((s) => ({
+    passed: [{ id: listing.id, title: listing.title, source: listing.source, at: Date.now() }, ...s.passed.filter((p) => p.id !== listing.id)].slice(0, 200),
+    feed: s.feed && { ...s.feed, picks: s.feed.picks.filter((p) => p.id !== listing.id) },
+  }));
+  return index;
+}
+
+export function undoPass(listing: Listing, index: number) {
+  setState((s) => {
+    if (!s.feed) return { passed: s.passed.filter((p) => p.id !== listing.id) };
+    const picks = s.feed.picks.filter((p) => p.id !== listing.id);
+    if (index >= 0) picks.splice(Math.min(index, picks.length), 0, listing);
+    return { passed: s.passed.filter((p) => p.id !== listing.id), feed: { ...s.feed, picks } };
+  });
 }
 
 export function setPrefs(patch: Partial<Prefs>) {

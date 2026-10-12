@@ -118,8 +118,10 @@ export async function sendMessage({ text = "", intent = "chat", photo, photoUrl 
   if (s.pending) return;
   const message = intent === "chat" ? text.trim() || "Find me something like this." : ASK[intent];
   const history = historyFor(s.chat);
-  // New picks and "more" should bring new pieces; a new request may reuse anything.
-  const seen = intent === "chat" ? [] : (s.feed?.picks ?? []).map((p) => p.id).slice(-300);
+  // New picks and "more" should bring new pieces; a new request may reuse anything it
+  // has shown, but never what they said "Not for me" to.
+  const shown = intent === "chat" ? [] : (s.feed?.picks ?? []).map((p) => p.id).slice(-240);
+  const seen = [...new Set([...s.passed.map((p) => p.id).slice(0, 150), ...shown])];
   const freshProfile = s.profile && s.profile.boardKey === boardKey(s.board) ? s.profile.profile : null;
 
   const chat =
@@ -149,6 +151,7 @@ export async function sendMessage({ text = "", intent = "chat", photo, photoUrl 
         profile: freshProfile,
         prefs: s.prefs,
         seen,
+        passed: s.passed.slice(0, 30).map(({ title, source }) => ({ title, source })),
         intent,
       }),
     });

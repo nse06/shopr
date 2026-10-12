@@ -111,6 +111,7 @@ export type ChatInput = {
   profile: StyleProfile | null;
   prefs: Prefs;
   seen: string[];
+  passed?: { title: string; source: string }[]; // tapped "Not for me" lately, newest first
 };
 
 export type Reply = { message: string; picks: Listing[]; followUps: string[]; query: string | null };
@@ -210,10 +211,19 @@ export function historyMessages(history: HistoryTurn[]): MessageParam[] {
     });
 }
 
+/** The pieces they passed on, so the stylist can steer away from things like them. */
+export function passedNote(passed: { title: string; source: string }[]): string | null {
+  if (!passed.length) return null;
+  const lines = passed.slice(0, 30).map((p, i) => `${i + 1}. ${p.title} (${p.source})`);
+  return `Pieces I tapped "Not for me" on lately (skip things like these unless I ask for them):\n${lines.join("\n")}`;
+}
+
 function currentMessage(input: ChatInput): MessageParam {
   const text = input.message.trim() || "Find me something like this.";
   const content: ContentBlock[] = [];
   if (input.photo) content.push(image(input.photo.data, input.photo.mediaType));
+  const passed = passedNote(input.passed ?? []);
+  if (passed) content.push({ type: "text", text: passed });
   content.push({ type: "text", text, cache_control: { type: "ephemeral" } });
   return { role: "user", content };
 }

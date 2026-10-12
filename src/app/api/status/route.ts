@@ -12,6 +12,7 @@ export async function GET(req: Request) {
     ebay: ebayConfigured(),
     depop: depopConfigured(),
     sharing: storageConfigured(),
+    referrals: Boolean(process.env.EBAY_CAMPAIGN_ID),
     shops: SHOPS.length,
     passwordRequired: passwordRequired(),
     authorized: authorized(req),

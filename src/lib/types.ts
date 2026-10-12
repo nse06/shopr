@@ -70,6 +70,7 @@ export type Status = {
   ebay: boolean;
   depop: boolean;
   sharing: boolean; // somewhere to keep public boards (a Vercel Blob store)
+  referrals: boolean; // some links earn a commission (eBay Partner Network)
   shops: number;
   passwordRequired: boolean;
   authorized: boolean;
@@ -112,3 +113,12 @@ export type CostTotals = {
 };
 
 export type CostSummary = { enabled: boolean; week: CostTotals; month: CostTotals; recent: CostEntry[] };
+
+// Taps on "view listing": where people went, so shops and networks can see the traffic.
+export type ClickWhere = "home" | "more" | "saved" | "elsewhere";
+
+export type ClickEntry = { at: number; source: string; title: string; priceUsd: number | null; via: string | null; where: ClickWhere };
+
+export type ClickTotals = { clicks: number; bySource: Record<string, number>; byCreator: Record<string, number> };
+
+export type ClickSummary = { enabled: boolean; week: ClickTotals; month: ClickTotals; recent: ClickEntry[] };

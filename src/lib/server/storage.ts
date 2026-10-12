@@ -4,6 +4,7 @@
 // development and tests, SHOPR_LOCAL_BLOB_DIR points at a folder instead, served by
 // /api/local-blob.
 
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { BlobNotFoundError, BlobPreconditionFailedError, del, head, list, put, type HeadBlobResult } from "@vercel/blob";
@@ -26,6 +27,30 @@ export interface Store {
 }
 
 const LOCAL_ROUTE = "/api/local-blob/";
+
+/** Read a JSON file, change it and write it back, starting over if another write got there first. */
+export async function updateJson<T>(s: Store, pathname: string, empty: () => T, change: (data: T) => T): Promise<T> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const current = await s.readJson<T>(pathname);
+    const next = change(current?.data ?? empty());
+    try {
+      await s.writeJson(pathname, next, { ifMatch: current?.etag ?? null });
+      return next;
+    } catch (e) {
+      if (!(e instanceof Conflict)) throw e;
+    }
+  }
+  throw new Error(`Couldn't update ${pathname}: it kept changing. Try again.`);
+}
+
+/**
+ * A folder for the owner's own records (costs, clicks). The store is public, so the
+ * name is a hash of the Claude key: it can't be guessed from shared photos' addresses.
+ */
+export function privateFolder(name: string): string {
+  const secret = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || "local";
+  return `${name}/${createHash("sha256").update(`shopr ${name} ${secret}`).digest("hex").slice(0, 24)}`;
+}
 
 const blobConnected = () => Boolean(process.env.BLOB_STORE_ID || process.env.BLOB_READ_WRITE_TOKEN);
 
@@ -106,8 +131,14 @@ export class BlobStore implements Store {
   }
 }
 
-/** Files in a local folder, for development and tests. ETags are file modification times. */
+/**
+ * Files in a local folder, for development and tests. Like Blob, a conditional write
+ * checks and writes in one step: writes to a file wait their turn, and ETags are
+ * hashes of the contents.
+ */
 class FolderStore implements Store {
+  private queue = new Map<string, Promise<void>>();
+
   constructor(private root: string) {}
 
   private file(pathname: string): string {
@@ -116,18 +147,31 @@ class FolderStore implements Store {
     return full;
   }
 
-  private async etag(full: string): Promise<string | null> {
+  private async exclusive<T>(full: string, work: () => Promise<T>): Promise<T> {
+    const result = (this.queue.get(full) ?? Promise.resolve()).then(work);
+    this.queue.set(
+      full,
+      result.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return result;
+  }
+
+  private async contents(full: string): Promise<{ text: string; etag: string } | null> {
     try {
-      return String((await fs.stat(full)).mtimeMs);
+      const text = await fs.readFile(full, "utf8");
+      return { text, etag: createHash("sha1").update(text).digest("hex") };
     } catch {
       return null;
     }
   }
 
   async readJson<T>(pathname: string) {
-    const full = this.file(pathname);
+    const found = await this.contents(this.file(pathname));
     try {
-      return { data: JSON.parse(await fs.readFile(full, "utf8")) as T, etag: await this.etag(full) };
+      return found ? { data: JSON.parse(found.text) as T, etag: found.etag } : null;
     } catch {
       return null;
     }
@@ -135,9 +179,11 @@ class FolderStore implements Store {
 
   async writeJson(pathname: string, data: unknown, opts: { ifMatch?: string | null } = {}) {
     const full = this.file(pathname);
-    if (opts.ifMatch !== undefined && (await this.etag(full)) !== opts.ifMatch) throw new Conflict("Changed meanwhile.");
-    await fs.mkdir(path.dirname(full), { recursive: true });
-    await fs.writeFile(full, JSON.stringify(data));
+    await this.exclusive(full, async () => {
+      if (opts.ifMatch !== undefined && ((await this.contents(full))?.etag ?? null) !== opts.ifMatch) throw new Conflict("Changed meanwhile.");
+      await fs.mkdir(path.dirname(full), { recursive: true });
+      await fs.writeFile(full, JSON.stringify(data));
+    });
   }
 
   async writeFile(pathname: string, bytes: Uint8Array) {

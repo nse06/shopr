@@ -5,9 +5,9 @@ import { useEffect, useRef, useState } from "react";
 import { retryLast, sendMessage } from "@/lib/client/api";
 import { processChatPhoto } from "@/lib/client/images";
 import { useApp } from "@/lib/client/store";
-import { ago, requestLabel, Thinking } from "./Bits";
+import { ago, PassToast, requestLabel, Thinking, usePass } from "./Bits";
 import { ArrowRight, ArrowUp, Camera, Close, Refresh, Sparkle } from "./icons";
-import { ListingTile } from "./Listing";
+import { Disclosure, ListingTile } from "./Listing";
 
 const STARTERS = ["Only jackets", "Under $100", "Something for a wedding"];
 const SHOWN_TURNS = 6;
@@ -22,6 +22,7 @@ export function Home() {
   const [photo, setPhoto] = useState<{ data: string; preview: string } | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const { last: passed, pass, undo } = usePass();
   const topRef = useRef<HTMLElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -111,13 +112,15 @@ export function Home() {
         <>
           <div className={updating ? "grid9 is-updating" : "grid9"} aria-busy={updating}>
             {picks.map((l) => (
-              <ListingTile key={l.id} listing={l} />
+              <ListingTile key={l.id} listing={l} onPass={updating ? undefined : () => pass(l)} />
             ))}
           </div>
           {picks.length === 0 && <p className="muted">Nothing fit this time. Ask for something else below.</p>}
           <Link className="btn btn--block" href="/more">
             More picks <ArrowRight size={18} />
           </Link>
+          <Disclosure />
+          {passed && <PassToast onUndo={undo} />}
         </>
       ) : !loaded ? null : updating ? (
         <div className="grid9" aria-hidden="true">

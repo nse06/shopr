@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { sendMessage } from "@/lib/client/api";
 import { useApp } from "@/lib/client/store";
-import { ListingCard } from "./Listing";
+import { Disclosure, ListingCard } from "./Listing";
 
 export function Saved() {
   const { loaded, saved, pending, status } = useApp();
@@ -32,6 +32,7 @@ export function Saved() {
             <ListingCard
               key={l.id}
               listing={l}
+              where="saved"
               onMore={
                 pending || !ready
                   ? undefined
@@ -45,6 +46,7 @@ export function Saved() {
         </div>
       )}
       {saved.length > 0 && <p className="hint">Secondhand pieces sell quickly, so a link can stop working once its piece is sold.</p>}
+      {saved.length > 0 && <Disclosure />}
     </main>
   );
 }

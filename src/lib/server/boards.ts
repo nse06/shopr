@@ -9,7 +9,7 @@
 
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { BoardSummary, PublicBoard } from "../types";
-import { Conflict, type Store } from "./storage";
+import { Conflict, updateJson, type Store } from "./storage";
 
 export const MAX_PUBLIC_PHOTOS = 60;
 // Photos a handle may keep uploaded at once: room to swap every photo of a full board
@@ -96,16 +96,7 @@ export function summarize(board: PublicBoard): BoardSummary {
 }
 
 async function updateIndex(s: Store, change: (boards: BoardSummary[]) => BoardSummary[]) {
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const current = await s.readJson<Index>(INDEX);
-    try {
-      await s.writeJson(INDEX, { boards: change(current?.data.boards ?? []) } satisfies Index, { ifMatch: current?.etag ?? null });
-      return;
-    } catch (e) {
-      if (!(e instanceof Conflict)) throw e;
-    }
-  }
-  throw new Error("Couldn't update the list of boards. Try again.");
+  await updateJson<Index>(s, INDEX, () => ({ boards: [] }), (index) => ({ boards: change(index.boards) }));
 }
 
 /** Save a board, list it for search, and delete photos it no longer uses. */

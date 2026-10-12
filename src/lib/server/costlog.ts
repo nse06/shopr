@@ -1,11 +1,9 @@
 // A running tally of what shopr costs, kept in the Blob store: one file per month with
-// totals per day and the latest requests. The folder name is a hash of the Claude key,
-// so it can't be guessed from the public addresses of shared photos.
+// totals per day and the latest requests.
 
-import { createHash } from "node:crypto";
 import type { CostEntry, CostKind, CostSummary, CostTotals } from "../types";
 import type { Meter } from "./costs";
-import { Conflict, storageConfigured, store, type Store } from "./storage";
+import { privateFolder, storageConfigured, store, updateJson, type Store } from "./storage";
 
 type KindDay = { n: number; claudeUsd: number; depopUsd: number; input: number; output: number; cacheRead: number; listings: number };
 type Month = { days: Record<string, Partial<Record<CostKind, KindDay>>>; recent: CostEntry[] };
@@ -14,21 +12,13 @@ const DAY = 86_400_000;
 const RECENT = 40;
 const round = (n: number) => Math.round(n * 1e5) / 1e5;
 
-function folder(): string {
-  const secret = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || "local";
-  return `costs/${createHash("sha256").update(`shopr costs ${secret}`).digest("hex").slice(0, 24)}`;
-}
-
-const monthPath = (at: number) => `${folder()}/${new Date(at).toISOString().slice(0, 7)}.json`;
+const monthPath = (at: number) => `${privateFolder("costs")}/${new Date(at).toISOString().slice(0, 7)}.json`;
 const dayKey = (at: number) => new Date(at).toISOString().slice(0, 10);
 
 /** Add one request to this month's tally. */
 export async function recordCost(s: Store, meter: Meter, kind: CostKind, at = Date.now()): Promise<void> {
   const entry: CostEntry = { at, kind, usd: round(meter.usd), claudeUsd: round(meter.claude.usd), depopUsd: round(meter.depop.usd), ok: meter.ok };
-  const path = monthPath(at);
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const current = await s.readJson<Month>(path);
-    const month: Month = current?.data ?? { days: {}, recent: [] };
+  await updateJson<Month>(s, monthPath(at), () => ({ days: {}, recent: [] }), (month) => {
     const day = (month.days[dayKey(at)] ??= {});
     const k = (day[kind] ??= { n: 0, claudeUsd: 0, depopUsd: 0, input: 0, output: 0, cacheRead: 0, listings: 0 });
     k.n++;
@@ -39,14 +29,8 @@ export async function recordCost(s: Store, meter: Meter, kind: CostKind, at = Da
     k.cacheRead += meter.claude.cacheRead;
     k.listings += meter.depop.listings;
     month.recent = [entry, ...month.recent].slice(0, RECENT);
-    try {
-      await s.writeJson(path, month, { ifMatch: current?.etag ?? null });
-      return;
-    } catch (e) {
-      if (!(e instanceof Conflict)) throw e;
-    }
-  }
-  throw new Error("Couldn't update the cost log.");
+    return month;
+  });
 }
 
 /** Log what a request cost (to Vercel's logs, and the Blob store when there is one). Never throws. */
