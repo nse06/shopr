@@ -26,38 +26,17 @@ You need [uv](https://docs.astral.sh/uv/) (Python), Node.js and Git, plus about 
 
 ### Windows
 
-Use **Command Prompt** (search for "cmd"), not PowerShell: PowerShell often blocks the `npx` command.
+Open **Command Prompt** (search for "cmd"), paste this line and press Enter:
 
-1. Install the tools (skip any you already have), then **close and reopen Command Prompt** so it can find them:
+```bat
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/nse06/shopr/refs/heads/claude/youthful-darwin-mcsbnd/scripts/install-windows.ps1 | iex"
+```
 
-   ```bat
-   winget install -e --id Git.Git
-   winget install -e --id OpenJS.NodeJS.LTS
-   winget install -e --id astral-sh.uv
-   winget install -e --id Microsoft.VCRedist.2015+.x64
-   ```
+It installs what shopr needs (Git, Node.js, uv), downloads shopr into your user folder, sets it up and puts a **Start shopr** icon on your desktop. The first run takes 10–20 minutes. Windows will ask for permission a few times while installing tools: click **Yes**. To update shopr later, close shopr and run the same line again.
 
-2. Download shopr and install it. This takes several minutes the first time:
+To use shopr, double-click **Start shopr**. A window opens and your browser opens shopr. Keep the window open while you use it. The window also shows the address to type into the phone app. The first time, when Windows asks whether Python may use the network, click **Allow**.
 
-   ```bat
-   git clone -b claude/youthful-darwin-mcsbnd https://github.com/nse06/shopr.git
-   cd shopr\backend
-   uv sync --extra ml
-   cd ..\app
-   npm ci
-   npx expo export --platform web
-   ```
-
-3. Start the server:
-
-   ```bat
-   cd ..\backend
-   uv run shopr
-   ```
-
-   When Windows Firewall asks about Python, allow it on **private networks**, or your phone can't connect.
-
-Next time, you only need `cd shopr\backend` and `uv run shopr`. To get updates, run `git pull` in the `shopr` folder, then repeat step 2 from `uv sync`.
+The installer is [`scripts/install-windows.ps1`](scripts/install-windows.ps1) if you want to see what it does.
 
 ### Mac and Linux
 
@@ -88,7 +67,7 @@ Copy `backend/.env.example` to `backend/.env`:
 
 1. Every push that touches `app/` runs the **iOS app (unsigned IPA)** GitHub Action. Download `shopr-unsigned.ipa` from the run's artifacts, or from the `ios-latest` pre-release on the Releases page.
 2. Sideload it (Sideloadly, AltStore or similar sign it with your Apple ID). Apps signed with a free Apple ID expire after 7 days, so re-sideload when that happens.
-3. Start the server on your computer (`uv run shopr` or `make server`). It prints the address to use, e.g. `http://192.168.1.20:8000`.
+3. Start the server on your computer (double-click **Start shopr** on Windows, or run `make server`). Its window shows the address to use, e.g. `http://192.168.1.20:8000`.
 4. In the app, open **Setup**, enter that address and tap **Save and connect**. The first time, iOS asks for local network access; allow it.
 
 **If the phone can't connect:** both devices must be on the same Wi-Fi, and some networks (guest, hotel, campus) block devices from talking to each other. On Windows, the Wi-Fi network must be set to **Private** and Python allowed through the firewall (Windows Security → Firewall & network protection → Allow an app through firewall).
