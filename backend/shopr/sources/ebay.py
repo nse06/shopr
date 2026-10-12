@@ -115,10 +115,11 @@ def parse_items(body: dict[str, Any]) -> list[dict[str, Any]]:
             "image_url": _bigger_image(image),
             "description": item.get("shortDescription") or "",
             "sizes": guess_sizes(item.get("title") or "", []),
+            # No seller details are kept: shopr stores public listing info only, never
+            # eBay user data (which is what eBay's account-deletion exemption requires).
             "extra": {
                 "condition": item.get("condition"),
                 "buying_options": item.get("buyingOptions"),
-                "seller": (item.get("seller") or {}).get("username"),
             },
         })
     return [o for o in out if o["url"]]

@@ -60,9 +60,10 @@ def test_ebay_parse():
         "itemId": "v1|123|0", "title": "Vintage Carhartt Chore Coat", "price": {"value": "89.99", "currency": "USD"},
         "image": {"imageUrl": "https://i.ebayimg.com/images/g/abc/s-l225.jpg"},
         "itemWebUrl": "https://www.ebay.com/itm/123", "itemAffiliateWebUrl": "https://ebay.us/aff",
-        "condition": "Pre-owned",
+        "condition": "Pre-owned", "seller": {"username": "someone", "feedbackScore": 10},
     }]}
     item = parse_items(body)[0]
+    assert "seller" not in item["extra"] and "someone" not in str(item)  # no eBay user data is kept
     assert item["id"] == "ebay:v1|123|0"
     assert item["price"] == 89.99
     assert item["image_url"].endswith("s-l500.jpg")
