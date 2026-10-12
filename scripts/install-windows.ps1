@@ -16,7 +16,8 @@ $Repo = 'https://github.com/nse06/shopr.git'
 if ($env:SHOPR_REPO) { $Repo = $env:SHOPR_REPO }
 $Branch = 'claude/youthful-darwin-mcsbnd'
 if ($env:SHOPR_BRANCH) { $Branch = $env:SHOPR_BRANCH }
-$InstallDir = Join-Path $HOME 'shopr'
+# A dedicated folder name, so it never collides with an existing "shopr" folder.
+$InstallDir = Join-Path $HOME 'shopr-app'
 if ($env:SHOPR_DIR) { $InstallDir = $env:SHOPR_DIR }
 
 $OnWindows = [System.Environment]::OSVersion.Platform -eq 'Win32NT'
@@ -39,6 +40,10 @@ function Stop-Install([string]$Message) {
     Write-Host ''
     Write-Host "Setup stopped: $Message" -ForegroundColor Red
     Write-Host 'Copy the messages above and send them to Claude to get it fixed.' -ForegroundColor Red
+    # When started with the one-line command (powershell -c ...), just end that PowerShell.
+    # When pasted into an open PowerShell window, throw instead so the window stays open.
+    $oneLiner = [System.Environment]::GetCommandLineArgs() | Where-Object { $_ -match '^[-/](c|command|e|ec|encodedcommand|f|file)$' }
+    if ($oneLiner) { exit 1 }
     throw $Message
 }
 
@@ -142,7 +147,7 @@ if (Test-Path (Join-Path $InstallDir '.git')) {
     # Only tracked files are reset; your data and settings (.env) are never touched.
     Invoke-Native 'Applying the update' { git -C $InstallDir reset --hard FETCH_HEAD }
 } elseif (Test-Path $InstallDir) {
-    Stop-Install "The folder $InstallDir already exists but isn't a shopr download. Rename or delete it, then run this again."
+    Stop-Install "The folder $InstallDir already exists but wasn't made by this installer. Rename or delete it, then run this again."
 } else {
     Write-Step "Downloading shopr into $InstallDir"
     Invoke-Native 'Downloading shopr' { git clone --depth 1 -b $Branch $Repo $InstallDir }

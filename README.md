@@ -32,7 +32,7 @@ Open **Command Prompt** (search for "cmd"), paste this line and press Enter:
 powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/nse06/shopr/refs/heads/claude/youthful-darwin-mcsbnd/scripts/install-windows.ps1 | iex"
 ```
 
-It installs what shopr needs (Git, Node.js, uv), downloads shopr into your user folder, sets it up and puts a **Start shopr** icon on your desktop. The first run takes 10–20 minutes. Windows will ask for permission a few times while installing tools: click **Yes**. To update shopr later, close shopr and run the same line again.
+It installs what shopr needs (Git, Node.js, uv), downloads shopr into a `shopr-app` folder in your user folder, sets it up and puts a **Start shopr** icon on your desktop. The first run takes 10–20 minutes. Windows will ask for permission a few times while installing tools: click **Yes**. To update shopr later, close shopr and run the same line again.
 
 To use shopr, double-click **Start shopr**. A window opens and your browser opens shopr. Keep the window open while you use it. The window also shows the address to type into the phone app. The first time, when Windows asks whether Python may use the network, click **Allow**.
 
