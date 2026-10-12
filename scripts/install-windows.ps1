@@ -217,6 +217,11 @@ $lines = @(
 if ($PythonOverride) { $lines += "set UV_PYTHON=$PythonOverride" }
 $lines += @(
     '"%UV%" run shopr --open',
+    'rem Exit code 3: shopr was already running and has been opened in the browser.',
+    'if %errorlevel%==3 (',
+    '  timeout /t 6 >nul',
+    '  exit /b 0',
+    ')',
     'echo.',
     'echo shopr has stopped. Press any key to close this window.',
     'pause >nul'

@@ -54,8 +54,14 @@ class SiglipEmbedder:
     dim = 768
 
     def __init__(self, batch_size: int = 32):
+        import logging
+
         import open_clip
         import torch
+
+        # Hugging Face's servers send a "you're not logged in" warning with each model
+        # download check. The model is public, so it's just noise in the shopr window.
+        logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
         self._torch = torch
         if torch.cuda.is_available():

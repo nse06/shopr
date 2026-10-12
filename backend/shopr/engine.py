@@ -361,6 +361,10 @@ class Engine:
                     self.db.set_listing_embedding(lid, v)
             done += len(batch)
             if done % 256 == 0 or done == len(pending):
+                # Refresh the feed as photos come in, so matches show up within a minute
+                # or two instead of after the whole batch.
+                if done < len(pending):
+                    await self.rank(prof)
                 logline(f"Analyzed {done}/{len(pending)} photos")
 
     # ------------------------------------------------------------------ ranking

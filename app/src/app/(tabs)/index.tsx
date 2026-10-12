@@ -47,6 +47,12 @@ export default function FeedScreen() {
     if (ready) load();
   }, [ready, load, feedVersion]);
 
+  // During a search the feed fills in batches; check again each time the search reports progress.
+  const progress = run?.status === 'running' ? (run.detail?.log?.length ?? 0) : -1;
+  useEffect(() => {
+    if (ready && progress > 0 && items.length === 0) load();
+  }, [ready, progress, items.length, load]);
+
   // Pick up changes made on other tabs (filters, moodboard).
   useFocusEffect(
     useCallback(() => {
@@ -161,8 +167,9 @@ export default function FeedScreen() {
           <View style={styles.empty}>
             <Text style={[styles.h1, { color: t.text }]}>{run?.status === 'running' ? 'Searching…' : 'Nothing to rate yet'}</Text>
             <Muted style={{ textAlign: 'center', marginBottom: 16 }}>
-              Add images to your moodboard, then search the shops. The first search pulls whole shop catalogs and can
-              take several minutes.
+              {run?.status === 'running'
+                ? 'shopr is looking at listing photos one by one. Your first matches show up here in a minute or two, and more keep arriving while it works.'
+                : 'Add images to your moodboard, then search the shops. The first search looks at thousands of photos and takes several minutes; later searches are much faster.'}
             </Muted>
             <Button title="Find listings" onPress={startRefresh} disabled={run?.status === 'running'} />
           </View>
