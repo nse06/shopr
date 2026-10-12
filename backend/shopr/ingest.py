@@ -66,7 +66,9 @@ def video_frames(data: bytes, suffix: str = ".mp4", count: int = 5) -> list[Imag
                 capture_output=True,
             )
             if out.exists():
-                frames.append(Image.open(out).convert("RGB"))
+                # Close the file before the temp dir is removed (Windows can't delete open files).
+                with Image.open(out) as frame:
+                    frames.append(frame.convert("RGB"))
         if not frames:
             raise IngestError("Couldn't extract frames from that video.")
         return frames
