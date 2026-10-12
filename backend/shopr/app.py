@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -317,6 +317,16 @@ def create_app(settings: Settings | None = None, embedder_factory=None) -> FastA
             if path and candidate.is_file() and s.web_dir.resolve() in candidate.parents:
                 return FileResponse(candidate)
             return FileResponse(s.web_dir / "index.html")
+
+    else:
+
+        @app.get("/", include_in_schema=False)
+        async def no_web_build():
+            return HTMLResponse(
+                "<p style='font-family:sans-serif'>The shopr server is running, but the website isn't built yet. "
+                "Run <code>make web</code> (or <code>cd app &amp;&amp; npx expo export --platform web</code>) "
+                "and reload. The phone app works without it.</p>"
+            )
 
     return app
 

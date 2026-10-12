@@ -134,6 +134,11 @@ def test_board_delete_and_bad_upload(client):
     assert client.delete(f"/api/board/{item['id']}").json()["board"] == []
 
 
+def test_root_explains_missing_web_build(client):
+    r = client.get("/")
+    assert r.status_code == 200 and "make web" in r.text
+
+
 def test_token_required(tmp_path, monkeypatch):
     monkeypatch.setenv("SHOPR_TOKEN", "sekret")
     app = create_app(Settings(data_dir=tmp_path, embedder="fake", web_dir=tmp_path / "noweb"), embedder_factory=FakeEmbedder)
