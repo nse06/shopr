@@ -121,13 +121,13 @@ describe("stylist", () => {
     });
   });
 
-  it("keeps only picks it actually showed", () => {
+  it("keeps only picks it actually showed, in its order", () => {
     const shown = new Map([
       ["L1", listing("x")],
       ["L2", listing("y")],
     ]);
-    const reply = toReply({ message: " Two good ones. ", picks: [{ id: "L2", why: "fits" }, { id: "L9", why: "made up" }, { id: "L2", why: "dupe" }], follow_ups: ["a", "", "b"] }, shown, "q");
-    expect(reply).toEqual({ message: "Two good ones.", picks: [{ ...listing("y"), why: "fits" }], followUps: ["a", "b"], query: "q" });
+    const reply = toReply({ message: " Two good ones. ", picks: ["L2", "L9", " L1", "L2", 7], follow_ups: ["a", "", "b"] }, shown, "q");
+    expect(reply).toEqual({ message: "Two good ones.", picks: [listing("y"), listing("x")], followUps: ["a", "b"], query: "q" });
   });
 
   it("searches, shows Claude the photos, and returns its picks", async () => {
@@ -147,11 +147,11 @@ describe("stylist", () => {
             "tool_use",
           );
         }
-        return message([{ type: "text", text: JSON.stringify({ message: "Found one.", picks: [{ id: "L2", why: "Right fade." }], follow_ups: ["More"] }) } as Anthropic.Beta.BetaContentBlock], "end_turn");
+        return message([{ type: "text", text: JSON.stringify({ message: "Found one.", picks: ["L2"], follow_ups: ["More"] }) } as Anthropic.Beta.BetaContentBlock], "end_turn");
       },
     };
     const reply = await runStylist(input(), (e) => events.push(`${e.type}: ${e.text}`), undefined, deps);
-    expect(reply.picks.map((p) => [p.id, p.why])).toEqual([["b", "Right fade."]]);
+    expect(reply.picks.map((p) => p.id)).toEqual(["b"]);
     expect(reply.query).toBe("chore coat");
     expect(events).toEqual(["status: Thinking", "status: Searching 20 shops for “chore coat”", "notice: eBay failed", "status: Looking through 2 listings"]);
 
@@ -160,6 +160,7 @@ describe("stylist", () => {
     expect(first.fallbacks).toBe("default");
     expect(first.betas).toContain("server-side-fallback-2026-07-01");
     expect(first.output_config?.format?.type).toBe("json_schema");
+    expect(JSON.stringify(first.output_config?.format)).not.toContain("why"); // no per-item writing
     expect(first.tool_choice).toBeUndefined();
     // The assistant turn goes back unchanged (thinking included), then the results with photos.
     expect(second.messages.at(-2)?.content).toHaveLength(2);

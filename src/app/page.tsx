@@ -1,5 +1,5 @@
-import { Stylist } from "@/components/Stylist";
+import { Home } from "@/components/Home";
 
-export default function Home() {
-  return <Stylist />;
+export default function Page() {
+  return <Home />;
 }

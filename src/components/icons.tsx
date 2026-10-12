@@ -1,4 +1,4 @@
-// A few line icons, drawn to match the type: thin strokes, square ends.
+// A few line icons, drawn to match the type: light strokes with round ends.
 
 type Props = { size?: number; title?: string };
 
@@ -10,8 +10,8 @@ function Svg({ size = 20, title, children }: Props & { children: React.ReactNode
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.5}
-      strokeLinecap="square"
+      strokeWidth={1.8}
+      strokeLinecap="round"
       aria-hidden={title ? undefined : true}
       role={title ? "img" : undefined}
     >
@@ -70,3 +70,25 @@ export const Sliders = (p: Props) => (
     <path d="M14 4.5v5M8 14.5v5" />
   </Svg>
 );
+
+export const Camera = (p: Props) => (
+  <Svg {...p}>
+    <path d="M4 7h3l2-2h6l2 2h3v12H4z" strokeLinejoin="round" />
+    <circle cx="12" cy="13" r="3.5" />
+  </Svg>
+);
+
+export const Refresh = (p: Props) => (
+  <Svg {...p}>
+    <path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" strokeLinecap="round" strokeLinejoin="round" />
+  </Svg>
+);
+
+/** The four-point sparkle next to "Picked for you". */
+export function Sparkle({ size = 22, color = "currentColor" }: { size?: number; color?: string }) {
+  return (
+    <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill={color}>
+      <path d="M12 1.5c.9 5.4 3.1 7.6 8.5 8.5-5.4.9-7.6 3.1-8.5 8.5-.9-5.4-3.1-7.6-8.5-8.5 5.4-.9 7.6-3.1 8.5-8.5z" />
+    </svg>
+  );
+}

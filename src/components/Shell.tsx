@@ -8,7 +8,7 @@ import { flush, loadStore, savePassword, useApp } from "@/lib/client/store";
 import { Sliders } from "./icons";
 
 const NAV = [
-  { href: "/", label: "Stylist" },
+  { href: "/", label: "For you" },
   { href: "/board", label: "Board" },
   { href: "/saved", label: "Saved" },
 ];
@@ -22,10 +22,10 @@ function Masthead() {
         <Link href="/" className="wordmark" aria-label="shopr, your personal AI stylist">
           shopr
         </Link>
-        <span className="tagline">Your personal AI stylist</span>
+        <span className="tagline">your personal AI stylist</span>
         <nav aria-label="Main">
           {NAV.map((n) => (
-            <Link key={n.href} href={n.href} aria-current={path === n.href ? "page" : undefined}>
+            <Link key={n.href} href={n.href} aria-current={path === n.href || (n.href === "/" && path === "/more") ? "page" : undefined}>
               {n.label}
               {n.href === "/saved" && saved.length > 0 && <span className="count">{saved.length}</span>}
             </Link>
@@ -58,7 +58,6 @@ function PasswordGate() {
 
   return (
     <main className="page gate">
-      <p className="eyebrow">Private</p>
       <h1 className="display">This shopr is locked.</h1>
       <p className="lede">Enter the password you set in Vercel (APP_PASSWORD). This device will remember it.</p>
       <form onSubmit={unlock} className="gate-form">

@@ -1,7 +1,7 @@
 "use client";
 
-import type { ChatEvent, HistoryTurn, Pick, Status, StyleProfile } from "../types";
-import { boardForAI, boardKey, getPassword, getState, newId, setState, type StylistTurn, type Turn } from "./store";
+import type { ChatEvent, HistoryTurn, Listing, Status, StyleProfile } from "../types";
+import { boardForAI, boardKey, getPassword, getState, newId, setState, type Intent, type Shown, type StylistTurn, type Turn } from "./store";
 
 export class Locked extends Error {}
 
@@ -67,10 +67,6 @@ function boardPhotos(): string[] {
   return boardForAI(getState().board).map((b) => b.ai);
 }
 
-function priceLabel(p: Pick): string {
-  return p.price == null ? "price not listed" : formatPrice(p.price, p.currency);
-}
-
 export function formatPrice(price: number, currency: string | null): string {
   try {
     return new Intl.NumberFormat("en-US", { style: "currency", currency: currency || "USD", maximumFractionDigits: 0 }).format(price);
@@ -79,38 +75,66 @@ export function formatPrice(price: number, currency: string | null): string {
   }
 }
 
+function shownOf(picks: Listing[]): Shown[] {
+  return picks.slice(0, 9).map((p) => ({
+    title: p.title,
+    price: p.price == null ? "price not listed" : formatPrice(p.price, p.currency),
+    source: p.source,
+  }));
+}
+
 function historyFor(chat: Turn[]): HistoryTurn[] {
   return chat
     .filter((t) => !(t.role === "stylist" && t.error))
     .slice(-12)
-    .map((t) =>
-      t.role === "user"
-        ? { role: "user", text: t.text }
-        : { role: "stylist", text: t.text, picks: t.picks.map((p) => ({ title: p.title, price: priceLabel(p), source: p.source })) },
-    );
+    .map((t) => {
+      if (t.role === "user") return { role: "user", text: t.text };
+      // Conversations saved by the first version kept whole picks on each turn.
+      const legacy = (t as { picks?: Listing[] }).picks;
+      return { role: "stylist", text: t.text, picks: t.shown ?? (legacy ? shownOf(legacy) : undefined) };
+    });
 }
 
+// What the stylist is asked when nobody typed anything.
+const ASK: Record<Exclude<Intent, "chat">, string> = {
+  feed: "Pick things for me from my moodboard. Cover the different directions in it.",
+  more: "Find more for me in the same spirit as the picks you've shown me, but different pieces.",
+};
+
 export type Outgoing = {
-  text: string;
+  text?: string;
+  intent?: Intent; // chat (default): a message; feed: fresh picks from the board; more: extend the current picks
   photo?: { data: string; preview: string } | null; // a photo from this device
   photoUrl?: string | null; // a listing photo ("More like this"); the server fetches it
 };
 
-/** Send a message to the stylist. Runs outside any page, so it keeps going if you switch tabs. */
-export async function sendMessage({ text, photo, photoUrl }: Outgoing): Promise<void> {
+/**
+ * Ask the stylist for picks. Runs outside any page, so it keeps going if you
+ * switch screens. A chat message or "new picks" replaces the picks on the home
+ * screen; "more" adds to them.
+ */
+export async function sendMessage({ text = "", intent = "chat", photo, photoUrl }: Outgoing): Promise<void> {
   const s = getState();
   if (s.pending) return;
-  const message = text.trim() || "Find me something like this.";
-  const userTurn: Turn = { id: newId(), role: "user", text: message, photo: photo?.preview ?? photoUrl ?? undefined, at: Date.now() };
+  const message = intent === "chat" ? text.trim() || "Find me something like this." : ASK[intent];
   const history = historyFor(s.chat);
-  const seen = s.chat.flatMap((t) => (t.role === "stylist" ? t.picks.map((p) => p.id) : [])).slice(-300);
+  // New picks and "more" should bring new pieces; a new request may reuse anything.
+  const seen = intent === "chat" ? [] : (s.feed?.picks ?? []).map((p) => p.id).slice(-300);
   const freshProfile = s.profile && s.profile.boardKey === boardKey(s.board) ? s.profile.profile : null;
 
-  setState({ chat: [...s.chat, userTurn], pending: { status: "Thinking", notices: [], startedAt: Date.now() } });
+  const chat =
+    intent === "chat"
+      ? [...s.chat, { id: newId(), role: "user" as const, text: message, photo: photo?.preview ?? photoUrl ?? undefined, at: Date.now() }]
+      : s.chat;
+  setState({ chat, pending: { intent, status: "Thinking", notices: [], startedAt: Date.now() }, feedError: null, moreNote: null });
 
-  const finish = (turn: Omit<StylistTurn, "id" | "role" | "at">) =>
-    setState((now) => ({ pending: null, chat: [...now.chat, { id: newId(), role: "stylist", at: Date.now(), ...turn }] }));
-  const fail = (text: string) => finish({ text, picks: [], followUps: [], query: null, error: true });
+  const say = (turn: Omit<StylistTurn, "id" | "role" | "at">) => ({ id: newId(), role: "stylist" as const, at: Date.now(), ...turn });
+  const fail = (text: string) =>
+    setState((now) =>
+      intent === "chat"
+        ? { pending: null, chat: [...now.chat, say({ text, followUps: [], error: true })] }
+        : { pending: null, feedError: { intent, text } },
+    );
 
   try {
     const res = await call("/api/chat", {
@@ -133,7 +157,28 @@ export async function sendMessage({ text, photo, photoUrl }: Outgoing): Promise<
       else if (event.type === "notice")
         setState((now) => ({ pending: now.pending && { ...now.pending, notices: [...now.pending.notices, event.text] } }));
       else if (event.type === "error") return fail(event.text);
-      else if (event.type === "reply") return finish({ text: event.message, picks: event.picks, followUps: event.followUps, query: event.query });
+      else if (event.type === "reply") {
+        return setState((now) => {
+          if (intent === "more") {
+            const have = new Set((now.feed?.picks ?? []).map((p) => p.id));
+            const added = event.picks.filter((p) => !have.has(p.id));
+            return {
+              pending: null,
+              moreNote: added.length ? null : event.message,
+              feed: now.feed ? { ...now.feed, picks: [...now.feed.picks, ...added] } : { picks: added, request: null, query: event.query, at: Date.now() },
+            };
+          }
+          const turn = say({ text: event.message, followUps: event.followUps, shown: shownOf(event.picks) });
+          return {
+            pending: null,
+            chat: [...now.chat, turn],
+            // A reply without picks (advice) leaves the current picks alone.
+            feed: event.picks.length
+              ? { picks: event.picks, request: intent === "feed" ? null : message, query: event.query, at: Date.now() }
+              : now.feed,
+          };
+        });
+      }
     }
     fail("The connection dropped before your stylist finished. Try again.");
   } catch (e) {

@@ -18,8 +18,6 @@ export type Listing = {
   details: string; // a short bit of the description, when the shop gives one
 };
 
-export type Pick = Listing & { why: string };
-
 export type Prefs = {
   department: Department;
   tops: string[];
@@ -64,7 +62,7 @@ export type HistoryTurn = {
 export type ChatEvent =
   | { type: "status"; text: string }
   | { type: "notice"; text: string }
-  | { type: "reply"; message: string; picks: Pick[]; followUps: string[]; query: string | null }
+  | { type: "reply"; message: string; picks: Listing[]; followUps: string[]; query: string | null }
   | { type: "error"; text: string };
 
 export type Status = {

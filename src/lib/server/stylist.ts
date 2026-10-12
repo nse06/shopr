@@ -1,9 +1,9 @@
-// The stylist: one chat turn. Claude sees the moodboard and the conversation,
-// searches through a tool, looks at the listing photos, and answers with a short
-// message plus a few picks, each with a reason.
+// The stylist: one turn. Claude sees the moodboard and the conversation, searches
+// through a tool, looks at the listing photos, and answers with one short line plus
+// its picks, ranked best first (ids only: no per-item writing, to save tokens).
 
 import type Anthropic from "@anthropic-ai/sdk";
-import type { HistoryTurn, Listing, Pick, Prefs, StyleProfile } from "../types";
+import type { HistoryTurn, Listing, Prefs, StyleProfile } from "../types";
 import { claude, FALLBACKS, finalText, MODEL, StylistError } from "./claude";
 import { ebayConfigured } from "./ebay";
 import type { Photo } from "./fetching";
@@ -29,13 +29,13 @@ Finding things
 
 Choosing
 - Judge listings by their photos first. Pick what actually looks like their board: the cut, the fabric, the colour, the wear. A matching title with the wrong look is a miss.
-- Pick 3 to 6 listings, fewer if only a few are good. Never pad with weak picks. If nothing is right, say so plainly and suggest what to try instead.
+- Rank every listing that genuinely suits them, best first, up to 24. Their home screen shows your first nine as photos with price and shop; a "More picks" page shows the rest. Mix the directions in their taste near the top rather than nine of one thing. Leave out anything that doesn't fit; never pad.
 - Respect their sizes and budget. Only pick listings from the search results, using their ids exactly as shown.
 
 Writing
-- message: one to three short sentences, warm and direct, like a stylist who knows them well. Say what you went looking for or what stood out. Don't describe each pick; they appear as cards under your message. No filler words such as elevated, effortless, timeless, curated, vibe, aesthetic or must-have. No exclamation marks, no emoji.
-- picks: for each, one specific line on why it suits them, tied to what you see in its photo and on their board, for example "Same sun-faded duck canvas as your Carhartt pins, cut short and boxy." Mention size or condition only when it matters.
-- follow_ups: two or three short next requests written in their voice, such as "Show me these in black" or "Something dressier".`;
+- message: one short sentence (under 25 words), warm and direct, saying what you went for. Don't describe individual picks. No filler words such as elevated, effortless, timeless, curated, vibe, aesthetic or must-have. No exclamation marks, no emoji. If nothing was good enough, say so and suggest what to try.
+- picks: the listing ids only, best first.
+- follow_ups: two or three short next requests written in their voice, such as "Only jackets" or "Something dressier".`;
 
 export const SEARCH_TOOL: Anthropic.Beta.BetaTool = {
   name: "search_listings",
@@ -89,15 +89,7 @@ export const REPLY_FORMAT = {
     type: "object",
     properties: {
       message: { type: "string" },
-      picks: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: { id: { type: "string" }, why: { type: "string" } },
-          required: ["id", "why"],
-          additionalProperties: false,
-        },
-      },
+      picks: { type: "array", items: { type: "string" } },
       follow_ups: { type: "array", items: { type: "string" } },
     },
     required: ["message", "picks", "follow_ups"],
@@ -105,7 +97,7 @@ export const REPLY_FORMAT = {
   },
 };
 
-const MAX_PICKS = 6;
+const MAX_PICKS = 24;
 const MAX_SEARCHES = 2;
 const MAX_STEPS = 4;
 
@@ -119,7 +111,7 @@ export type ChatInput = {
   seen: string[];
 };
 
-export type Reply = { message: string; picks: Pick[]; followUps: string[]; query: string | null };
+export type Reply = { message: string; picks: Listing[]; followUps: string[]; query: string | null };
 
 export type StylistDeps = {
   create: (params: CreateParams, options: { signal?: AbortSignal }) => Promise<Anthropic.Beta.BetaMessage>;
@@ -356,13 +348,12 @@ export function toReply(
   query: string | null,
 ): Reply {
   const used = new Set<string>();
-  const picks: Pick[] = [];
-  for (const p of Array.isArray(parsed.picks) ? parsed.picks : []) {
-    const id = typeof p?.id === "string" ? p.id.trim() : "";
-    const listing = shown.get(id);
+  const picks: Listing[] = [];
+  for (const raw of Array.isArray(parsed.picks) ? parsed.picks : []) {
+    const listing = typeof raw === "string" ? shown.get(raw.trim()) : undefined;
     if (!listing || used.has(listing.id)) continue;
     used.add(listing.id);
-    picks.push({ ...listing, why: typeof p.why === "string" ? p.why.trim() : "" });
+    picks.push(listing);
     if (picks.length >= MAX_PICKS) break;
   }
   const followUps = (Array.isArray(parsed.follow_ups) ? parsed.follow_ups : [])

@@ -43,7 +43,7 @@ export const ChatSchema = z.object({
       z.object({
         role: z.enum(["user", "stylist"]),
         text: z.string().max(4000),
-        picks: z.array(z.object({ title: z.string().max(300), price: z.string().max(40), source: z.string().max(80) })).max(8).optional(),
+        picks: z.array(z.object({ title: z.string().max(300), price: z.string().max(40), source: z.string().max(80) })).max(12).optional(),
       }),
     )
     .max(40)

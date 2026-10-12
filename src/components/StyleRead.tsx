@@ -52,7 +52,7 @@ export function StyleRead() {
         <ol className="directions">
           {p.directions.map((d) => (
             <li key={d.name}>
-              <h3 className="eyebrow eyebrow--ink">{d.name}</h3>
+              <h3 className="direction-name">{d.name}</h3>
               <p>{d.description}</p>
               <div className="thumbs">
                 {d.photos

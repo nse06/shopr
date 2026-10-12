@@ -64,14 +64,13 @@ export function Settings() {
     <main className="page settings">
       <header className="page-head">
         <div>
-          <p className="eyebrow">Settings</p>
           <h1 className="display display--page">About you</h1>
         </div>
       </header>
 
       <section>
         <div>
-          <h2 className="eyebrow eyebrow--ink">Sizes and budget</h2>
+          <h2 className="section-title">Sizes and budget</h2>
           <p className="muted">Your stylist skips listings that state a size you don&apos;t wear, and anything outside your budget.</p>
         </div>
         <div className="fields">
@@ -137,7 +136,7 @@ export function Settings() {
 
       <section>
         <div>
-          <h2 className="eyebrow eyebrow--ink">Connections</h2>
+          <h2 className="section-title">Connections</h2>
           <p className="muted">Keys live in Vercel, never in this app. Change them in your project&apos;s Settings → Environment Variables, then redeploy.</p>
         </div>
         <ul className="checks">
@@ -177,7 +176,7 @@ export function Settings() {
 
       <section>
         <div>
-          <h2 className="eyebrow eyebrow--ink">Your data</h2>
+          <h2 className="section-title">Your data</h2>
           <p className="muted">Everything stays in this browser on this device. Each message to your stylist costs a few cents of Claude usage.</p>
         </div>
         <div className="danger-zone">
